@@ -1,0 +1,175 @@
+metadata.event_type:
+  meaning: "Classifies the type of event, such as process launch, login, network connection or file event."
+  importance: 9
+  category: "event classification"
+  mitre_hints: []
+  analyst_questions:
+    - "Does the event type match the alert story?"
+
+metadata.vendor_name:
+  meaning: "Identifies the vendor that produced the telemetry."
+  importance: 5
+  category: "source context"
+  mitre_hints: []
+  analyst_questions:
+    - "Which security product produced this evidence?"
+
+metadata.product_name:
+  meaning: "Identifies the product that produced the telemetry."
+  importance: 5
+  category: "source context"
+  mitre_hints: []
+  analyst_questions:
+    - "Which detection or telemetry product generated this event?"
+
+security_result.rule_name:
+  meaning: "The name of the detection rule or alert logic that generated the alert."
+  importance: 9
+  category: "alert context"
+  mitre_hints: []
+  analyst_questions:
+    - "Does the rule name accurately describe the observed activity?"
+    - "Is this a high-fidelity rule or a noisy behavioural rule?"
+
+security_result.display_name:
+  meaning: "Human-readable alert title or display name."
+  importance: 9
+  category: "alert context"
+  mitre_hints: []
+  analyst_questions:
+    - "Does the alert title match the actual evidence?"
+
+security_result.rule_id:
+  meaning: "Unique identifier for the detection rule."
+  importance: 7
+  category: "alert context"
+  mitre_hints: []
+  analyst_questions:
+    - "Is this rule known to have false positives?"
+
+security_result.summary:
+  meaning: "Short summary of the alert or detection result."
+  importance: 8
+  category: "alert explanation"
+  mitre_hints: []
+  analyst_questions:
+    - "Does the summary explain why this is suspicious?"
+
+security_result.description:
+  meaning: "Detailed description of the alert or detection result."
+  importance: 8
+  category: "alert explanation"
+  mitre_hints: []
+  analyst_questions:
+    - "Does the description contain required investigation steps or known limitations?"
+
+security_result.severity:
+  meaning: "Severity assigned by the security product or detection rule."
+  importance: 8
+  category: "severity"
+  mitre_hints: []
+  analyst_questions:
+    - "Is the severity justified by the available evidence?"
+
+security_result.priority:
+  meaning: "Priority assigned to the security result."
+  importance: 7
+  category: "severity"
+  mitre_hints: []
+  analyst_questions:
+    - "Does the priority align with the business criticality of the affected asset?"
+
+security_result.risk_score:
+  meaning: "Numeric risk score assigned to the security result."
+  importance: 8
+  category: "severity"
+  mitre_hints: []
+  analyst_questions:
+    - "What evidence contributed to the risk score?"
+
+security_result.action:
+  meaning: "Security control outcome such as allow, block, quarantine, fail or detect."
+  importance: 10
+  category: "security outcome"
+  mitre_hints: []
+  analyst_questions:
+    - "Was the activity blocked, allowed or only detected?"
+    - "If allowed, is containment or further validation needed?"
+
+security_result.attack_details.tactics:
+  meaning: "MITRE ATT&CK tactic context associated with the alert."
+  importance: 9
+  category: "MITRE ATT&CK"
+  mitre_hints: []
+  analyst_questions:
+    - "Which attack phase does this alert represent?"
+
+security_result.attack_details.techniques:
+  meaning: "MITRE ATT&CK technique context associated with the alert."
+  importance: 9
+  category: "MITRE ATT&CK"
+  mitre_hints: []
+  analyst_questions:
+    - "Do the mapped techniques match the actual evidence?"
+
+principal.user.userid:
+  meaning: "The acting user or account that initiated the observed activity."
+  importance: 9
+  category: "identity"
+  mitre_hints: []
+  analyst_questions:
+    - "Is this account expected to perform this action?"
+    - "Is this a service account, admin account or normal user?"
+
+principal.asset.hostname:
+  meaning: "The host where the activity originated."
+  importance: 9
+  category: "asset"
+  mitre_hints: []
+  analyst_questions:
+    - "Is this asset business-critical?"
+    - "Is this activity normal for this host?"
+
+principal.process.file.full_path:
+  meaning: "The full file path of the process involved in the activity."
+  importance: 9
+  category: "process"
+  mitre_hints:
+    - "T1059"
+  analyst_questions:
+    - "Is this process expected in this path?"
+    - "Is this a LOLBin or commonly abused Windows binary?"
+
+principal.process.command_line:
+  meaning: "The command line used by the process. This is high-value evidence for execution intent."
+  importance: 10
+  category: "execution"
+  mitre_hints:
+    - "T1059"
+    - "T1059.001"
+    - "T1027"
+  analyst_questions:
+    - "Is the command encoded, obfuscated or suspicious?"
+    - "Can the command be decoded?"
+    - "Was the command observed on other hosts?"
+
+principal.process.parent_process.file.full_path:
+  meaning: "The parent process that launched the observed process."
+  importance: 10
+  category: "process relationship"
+  mitre_hints:
+    - "T1204"
+    - "T1059"
+  analyst_questions:
+    - "Is the parent-child process relationship normal?"
+    - "Is Office spawning PowerShell, cmd, mshta, rundll32 or wscript?"
+
+target.ip:
+  meaning: "Destination or target IP address involved in the activity."
+  importance: 8
+  category: "network"
+  mitre_hints:
+    - "T1071"
+  analyst_questions:
+    - "Is the destination internal or external?"
+    - "Is the IP known malicious or rare in the environment?"
