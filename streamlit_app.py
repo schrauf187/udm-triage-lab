@@ -800,11 +800,10 @@ def render_guided_builder():
 
         st.success("Guided input converted into UDM-style key-value pairs. Alert loaded for analysis.")
 
-
 def render_analyst_app():
     """
     Clean user-facing app mode.
-    Uses the guided builder as input, then shows a simplified Claude result.
+    Uses the guided builder as input, then shows a compact phased analyst workflow.
     """
     st.subheader("SOC Alert Triage Assistant")
     st.caption(
@@ -818,7 +817,6 @@ def render_analyst_app():
         return
 
     st.divider()
-    st.caption(f"Current alert source: {st.session_state.current_alert_source}")
 
     pipeline = build_pipeline(st.session_state.current_alert)
 
@@ -829,24 +827,109 @@ def render_analyst_app():
     attack_path = pipeline["attack_path"]
     hunt_queries = pipeline["hunt_queries"]
 
-    st.markdown("### Initial deterministic assessment")
-    st.write(f"**Initial verdict:** {mitre_analysis['initial_verdict']}")
-    st.write(f"**Overall severity:** {mitre_analysis['overall_severity']}")
-    st.write(f"**Summary:** {mitre_analysis['summary']}")
+    st.markdown("## 1. 📊 Triage snapshot")
 
-    if mitre_analysis["matches"]:
-        with st.expander("Show matched suspicious patterns"):
+    snapshot_col1, snapshot_col2, snapshot_col3, snapshot_col4 = st.columns(4)
+
+    with snapshot_col1:
+        st.metric("Initial verdict", mitre_analysis.get("initial_verdict", "unknown"))
+
+    with snapshot_col2:
+        st.metric("Severity", mitre_analysis.get("overall_severity", "unknown"))
+
+    with snapshot_col3:
+        st.metric("Attack phase", attack_path.get("observed_position", "Unknown"))
+
+    with snapshot_col4:
+        st.metric("Path confidence", attack_path.get("confidence", "unknown"))
+
+    st.caption(f"Current alert source: {st.session_state.current_alert_source}")
+
+    st.markdown("## 2. 🧠 What happened?")
+
+    st.markdown(
+        f"""
+        <div class="compact-card">
+            <div class="compact-card-title">🧩 Deterministic first-pass summary</div>
+            <div class="compact-info">{escape(mitre_analysis.get("summary", "No deterministic summary available."))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    entity_col1, entity_col2, entity_col3 = st.columns(3)
+
+    with entity_col1:
+        st.markdown("#### 👤 User / host")
+        st.markdown(
+            f"""
+            <div class="compact-info">
+            <b>Users:</b> {escape(", ".join(entities.get("users", [])) or "None detected")}<br>
+            <b>Hosts:</b> {escape(", ".join(entities.get("hosts", [])) or "None detected")}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with entity_col2:
+        st.markdown("#### 🌐 Network")
+        st.markdown(
+            f"""
+            <div class="compact-info">
+            <b>IPs:</b> {escape(", ".join(entities.get("ips", [])) or "None detected")}<br>
+            <b>URLs:</b> {escape(", ".join(entities.get("urls", [])) or "None detected")}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with entity_col3:
+        st.markdown("#### 🧬 MITRE")
+        st.markdown(
+            f"""
+            <div class="compact-info">
+            <b>Tactics:</b> {escape(", ".join(entities.get("mitre_tactics", [])) or "None detected")}<br>
+            <b>Techniques:</b> {escape(", ".join(entities.get("mitre_techniques", [])) or "None detected")}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("🚨 Show matched suspicious patterns"):
+        if not mitre_analysis.get("matches"):
+            st.write("No deterministic suspicious pattern matched.")
+        else:
             for match in mitre_analysis["matches"]:
                 st.markdown(f"**{match['pattern_name']}**")
-                st.write(f"Severity: {match['severity']}")
-                st.write(f"Confidence: {match['confidence']}")
-                st.write(match["reason"])
+                st.markdown(
+                    f"""
+                    <div class="compact-info">
+                    <b>Severity:</b> {escape(str(match.get("severity", "unknown")))}<br>
+                    <b>Confidence:</b> {escape(str(match.get("confidence", "unknown")))}<br>
+                    <b>Reason:</b> {escape(str(match.get("reason", "")))}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.divider()
+
+    st.markdown("## 3. 🧭 Attack path and validation hunts")
+
+    render_attack_path_visualizer(
+        attack_path=attack_path,
+        hunt_queries=hunt_queries,
+        compact=True,
+    )
+
+    st.markdown("## 4. 🤖 AI triage explanation")
 
     if st.button("Generate AI Triage Summary", key="analyst_app_generate_claude"):
         with st.spinner("Claude is analyzing the evidence bundle..."):
             st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
 
     render_simple_claude_result(st.session_state.claude_result)
+
+    st.markdown("## 5. 🛠️ Technical details")
 
     with st.expander("Show technical evidence details"):
         st.markdown("#### Generated UDM JSON")
@@ -861,16 +944,11 @@ def render_analyst_app():
         st.markdown("#### MITRE analysis")
         st.json(mitre_analysis)
 
+        st.markdown("#### Attack path hypothesis")
+        st.json(attack_path)
+
         st.markdown("#### Evidence bundle sent to Claude")
         st.json(evidence_bundle)
-    
-    st.markdown("### Attack path and validation hunts")
-    render_attack_path_visualizer(
-        attack_path=attack_path,
-        hunt_queries=hunt_queries,
-        compact=True,
-    )
-
 
 st.title("🛡️ UDM Triage Lab")
 st.caption("Paste UDM-style alert JSON or build an alert using analyst-friendly fields.")

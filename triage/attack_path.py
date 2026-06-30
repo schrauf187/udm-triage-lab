@@ -60,22 +60,6 @@ KILL_CHAIN_PHASES = [
 ]
 
 
-TECHNIQUE_TO_PHASES = {
-    "T1204": ["Initial Access", "Execution"],
-    "T1059": ["Execution"],
-    "T1059.001": ["Execution"],
-    "T1027": ["Defense Evasion"],
-    "T1071": ["Command and Control"],
-    "T1105": ["Command and Control"],
-    "T1053": ["Persistence"],
-    "T1053.005": ["Persistence"],
-    "T1112": ["Defense Evasion", "Persistence"],
-    "T1218": ["Defense Evasion", "Execution"],
-    "T1218.005": ["Defense Evasion", "Execution"],
-    "T1218.011": ["Defense Evasion", "Execution"],
-}
-
-
 OFFICE_PROCESS_HINTS = [
     "winword.exe",
     "excel.exe",
@@ -93,7 +77,17 @@ def _lower_values(flattened: Dict[str, Any]) -> str:
     return " ".join(str(value).lower() for value in flattened.values())
 
 
-def _extract_technique_ids(mitre_analysis: Dict[str, Any], enriched_techniques: List[Dict[str, Any]]) -> List[str]:
+def _field_value_contains(flattened: Dict[str, Any], field_hint: str, value_hint: str) -> bool:
+    for field, value in flattened.items():
+        if field_hint.lower() in field.lower() and value_hint.lower() in str(value).lower():
+            return True
+    return False
+
+
+def _extract_technique_ids(
+    mitre_analysis: Dict[str, Any],
+    enriched_techniques: List[Dict[str, Any]],
+) -> List[str]:
     technique_ids = []
 
     for match in mitre_analysis.get("matches", []):
@@ -131,95 +125,150 @@ def build_attack_path_hypothesis(
     """
     Builds a cautious attack-path hypothesis from available alert evidence.
 
-    This does not confirm an attack chain.
-    It explains where the alert may sit in a larger chain and what to hunt next.
+    Important:
+    - Observed means directly visible in the alert evidence.
+    - Possible previous means it may have happened before this alert.
+    - Possible next means it may follow from this alert and should be validated.
+    - Known actor/software overlap is context only, not attribution.
     """
     all_values_lower = _lower_values(flattened)
     technique_ids = _extract_technique_ids(mitre_analysis, enriched_techniques)
 
     observed_phases = []
+    possible_previous_phases = []
+    possible_next_phases = []
+    later_stage_hunt_phases = []
+
     evidence_by_phase = {phase["phase"]: [] for phase in KILL_CHAIN_PHASES}
     techniques_by_phase = {phase["phase"]: [] for phase in KILL_CHAIN_PHASES}
 
-    for technique_id in technique_ids:
-        for phase in TECHNIQUE_TO_PHASES.get(technique_id, []):
-            observed_phases.append(phase)
-            techniques_by_phase[phase].append(technique_id)
+    has_powershell = "powershell.exe" in all_values_lower or "powershell" in all_values_lower
+    has_office_parent = any(process in all_values_lower for process in OFFICE_PROCESS_HINTS)
+    has_encoded = "-enc" in all_values_lower or "encoded" in all_values_lower or "base64" in all_values_lower
+    has_network_indicator = bool(entities.get("ips") or entities.get("urls"))
 
-    if "powershell.exe" in all_values_lower or "powershell" in all_values_lower:
+    # Execution: directly observed when process/command evidence exists.
+    if has_powershell:
         observed_phases.append("Execution")
         evidence_by_phase["Execution"].append("PowerShell execution observed")
-
-    if any(process in all_values_lower for process in OFFICE_PROCESS_HINTS):
-        observed_phases.append("Execution")
-        evidence_by_phase["Execution"].append("Office parent process observed")
-
-    if "-enc" in all_values_lower or "encoded" in all_values_lower or "base64" in all_values_lower:
-        observed_phases.append("Defense Evasion")
-        evidence_by_phase["Defense Evasion"].append("Encoded or obfuscated command content observed")
-
-    if entities.get("ips") or entities.get("urls"):
-        evidence_by_phase["Command and Control"].append(
-            "Network destination evidence exists, but C2 is not confirmed"
+        techniques_by_phase["Execution"].extend(
+            [tid for tid in technique_ids if tid in ["T1059", "T1059.001"]]
         )
 
-    observed_phases = _dedupe(observed_phases)
+    if has_office_parent:
+        observed_phases.append("Execution")
+        evidence_by_phase["Execution"].append("Office parent process observed")
+        techniques_by_phase["Execution"].append("T1204")
+
+        # Cautious: Office parent suggests possible document/user-execution chain,
+        # but does not prove phishing or initial access.
+        possible_previous_phases.append("Initial Access")
+        evidence_by_phase["Initial Access"].append(
+            "Office parent process may indicate document-based execution, but delivery vector is not confirmed"
+        )
+        techniques_by_phase["Initial Access"].append("T1204")
+
+    # Defense evasion: directly observed when encoded/obfuscated command content exists.
+    if has_encoded:
+        observed_phases.append("Defense Evasion")
+        evidence_by_phase["Defense Evasion"].append("Encoded or obfuscated command content observed")
+        techniques_by_phase["Defense Evasion"].extend(
+            [tid for tid in technique_ids if tid in ["T1027", "T1112", "T1218", "T1218.005", "T1218.011"]]
+        )
+
+    # Command and Control: do NOT mark as observed just because an IP exists.
+    # IP/URL means "needs validation" unless your future parser confirms network connection/C2 semantics.
+    if has_network_indicator:
+        possible_next_phases.append("Command and Control")
+        evidence_by_phase["Command and Control"].append(
+            "Network destination indicator exists, but C2 communication is not confirmed"
+        )
+        if "T1071" in technique_ids:
+            techniques_by_phase["Command and Control"].append("T1071")
+
+    # Persistence and discovery are common follow-on validation hunts after suspicious execution.
+    if "Execution" in observed_phases:
+        possible_next_phases.extend(["Discovery", "Persistence"])
+        later_stage_hunt_phases.extend(
+            [
+                "Credential Access",
+                "Lateral Movement",
+                "Collection",
+                "Exfiltration",
+                "Impact",
+            ]
+        )
 
     possible_previous_steps = []
     possible_next_steps = []
     reasoning = []
 
-    if any(process in all_values_lower for process in OFFICE_PROCESS_HINTS):
+    if has_office_parent:
         possible_previous_steps.extend(
             [
-                "Possible malicious document opened by user or automation",
-                "Possible phishing or downloaded document delivery",
+                "Possible malicious document opened by a user or automation",
+                "Possible phishing, downloaded document, or file-share delivery",
                 "Possible legitimate Office automation that needs validation",
             ]
         )
         reasoning.append(
-            "Office-to-PowerShell process relationships are commonly investigated as early execution chains."
+            "Office-to-PowerShell process relationships are commonly investigated as early execution chains, but the delivery vector is not proven by this alert alone."
         )
 
-    if "powershell" in all_values_lower:
+    if has_powershell:
         possible_next_steps.extend(
             [
-                "Payload download or script staging",
-                "Discovery commands from the same host/user",
-                "Persistence via scheduled task, service, registry, or startup location",
-                "External communication from PowerShell or child processes",
+                "Check whether PowerShell spawned child processes",
+                "Check whether the same host or user triggered later discovery or persistence alerts",
+                "Check whether PowerShell initiated external network connections",
             ]
         )
         reasoning.append(
-            "PowerShell execution can be legitimate, but in suspicious parent-child chains it often requires validation for follow-on activity."
+            "PowerShell execution can be legitimate, but suspicious parent-child relationships require validation for follow-on activity."
         )
 
-    if "-enc" in all_values_lower or "encoded" in all_values_lower:
+    if has_encoded:
         possible_next_steps.extend(
             [
-                "Decode command content to validate intent",
-                "Check whether obfuscation was used to hide download, execution, or persistence logic",
+                "Decode the command content to validate intent",
+                "Check whether the encoded command hides download, execution, persistence, or evasion logic",
             ]
         )
         reasoning.append(
             "Encoded command content increases suspicion but does not prove malicious activity by itself."
         )
 
-    if entities.get("ips") or entities.get("urls"):
+    if has_network_indicator:
         possible_next_steps.append(
             "Validate whether the observed destination is benign infrastructure, CDN, internal resource, or suspicious external infrastructure"
         )
+        reasoning.append(
+            "A network indicator is present, but the alert does not prove command-and-control without connection context, protocol, timing, or reputation."
+        )
 
     if not possible_previous_steps:
-        possible_previous_steps.append("Unknown previous phase. Hunt for earlier alerts involving the same host, user, IP, URL, or process.")
+        possible_previous_steps.append(
+            "Unknown previous phase. Hunt for earlier alerts involving the same host, user, IP, URL, process, or document."
+        )
 
     if not possible_next_steps:
-        possible_next_steps.append("Unknown next phase. Hunt for later alerts involving the same host, user, IP, URL, or process.")
+        possible_next_steps.append(
+            "Unknown next phase. Hunt for later alerts involving the same host, user, IP, URL, process, or MITRE technique."
+        )
 
-    if observed_phases:
-        observed_position = " / ".join(observed_phases[:3])
-    else:
-        observed_position = "Unknown"
+    observed_phases = _dedupe(observed_phases)
+    possible_previous_phases = _dedupe(possible_previous_phases)
+    possible_next_phases = _dedupe(possible_next_phases)
+    later_stage_hunt_phases = _dedupe(later_stage_hunt_phases)
+
+    observed_position_parts = []
+    if possible_previous_phases:
+        observed_position_parts.extend([f"Possible {phase}" for phase in possible_previous_phases])
+    observed_position_parts.extend(observed_phases)
+    if possible_next_phases:
+        observed_position_parts.extend([f"Validate {phase}" for phase in possible_next_phases[:1]])
+
+    observed_position = " / ".join(_dedupe(observed_position_parts)) or "Unknown"
 
     if "Execution" in observed_phases and "Defense Evasion" in observed_phases:
         confidence = "medium"
@@ -234,13 +283,14 @@ def build_attack_path_hypothesis(
         phase = phase_def["phase"]
 
         status = "Not observed"
+
         if phase in observed_phases:
             status = "Observed in this alert"
-        elif phase == "Initial Access" and any(process in all_values_lower for process in OFFICE_PROCESS_HINTS):
+        elif phase in possible_previous_phases:
             status = "Possible previous step"
-        elif phase in ["Command and Control", "Discovery", "Persistence"] and "Execution" in observed_phases:
+        elif phase in possible_next_phases:
             status = "Possible next step"
-        elif phase in ["Credential Access", "Lateral Movement", "Collection", "Exfiltration", "Impact"] and "Execution" in observed_phases:
+        elif phase in later_stage_hunt_phases:
             status = "Later-stage hunt"
 
         kill_chain_table.append(
@@ -257,8 +307,9 @@ def build_attack_path_hypothesis(
     actor_context = _collect_actor_context(enriched_techniques)
 
     summary = (
-        f"The alert most likely sits around the {observed_position} phase of a possible attack chain. "
-        "This is a hypothesis only. Additional alerts or telemetry are required to determine whether this is isolated activity or part of a broader intrusion path."
+        f"The alert most likely shows {', '.join(observed_phases) or 'an unknown activity stage'}. "
+        "Initial access and command-and-control are treated as hypotheses to validate, not confirmed stages. "
+        "Additional alerts or telemetry are required to determine whether this is isolated activity or part of a broader intrusion path."
     )
 
     return {
@@ -266,6 +317,9 @@ def build_attack_path_hypothesis(
         "confidence": confidence,
         "summary": summary,
         "observed_phases": observed_phases,
+        "possible_previous_phases": possible_previous_phases,
+        "possible_next_phases": possible_next_phases,
+        "later_stage_hunt_phases": later_stage_hunt_phases,
         "possible_previous_steps": _dedupe(possible_previous_steps),
         "possible_next_steps": _dedupe(possible_next_steps),
         "reasoning": _dedupe(reasoning),
