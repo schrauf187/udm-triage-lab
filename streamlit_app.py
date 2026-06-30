@@ -26,6 +26,7 @@ st.set_page_config(
     layout="wide",
 )
 
+
 if "current_alert" not in st.session_state:
     st.session_state.current_alert = None
 
@@ -79,7 +80,10 @@ def get_mitre_knowledge():
     return build_mitre_knowledge()
 
 
-def render_analysis(parsed_json: dict):
+def build_pipeline(parsed_json: dict):
+    """
+    Shared evidence pipeline used by both Advanced Lab and Analyst App.
+    """
     ontology = load_udm_ontology()
 
     flattened = flatten_json(parsed_json)
@@ -99,13 +103,96 @@ def render_analysis(parsed_json: dict):
         st.warning(f"MITRE enrichment is currently unavailable: {error}")
 
     evidence_bundle = build_evidence_bundle(
-    parsed_json=parsed_json,
-    entities=entities,
-    semantic_facts=semantic_facts,
-    mitre_analysis=mitre_analysis,
-    enriched_techniques=enriched_techniques,
-    data_mode=data_mode,
+        parsed_json=parsed_json,
+        entities=entities,
+        semantic_facts=semantic_facts,
+        mitre_analysis=mitre_analysis,
+        enriched_techniques=enriched_techniques,
+        data_mode=data_mode,
     )
+
+    return {
+        "flattened": flattened,
+        "entities": entities,
+        "enriched_table": enriched_table,
+        "semantic_facts": semantic_facts,
+        "mitre_analysis": mitre_analysis,
+        "enriched_techniques": enriched_techniques,
+        "evidence_bundle": evidence_bundle,
+    }
+
+
+def render_simple_claude_result(claude_result: dict):
+    """
+    Clean user-facing Claude result view for SOC analysts.
+    """
+    if not claude_result:
+        st.info("Generate an AI triage explanation to see the analyst summary.")
+        return
+
+    if "error" in claude_result:
+        st.error(claude_result["error"])
+
+        if "raw_response" in claude_result:
+            st.code(claude_result["raw_response"])
+
+        return
+
+    assessment = claude_result.get("assessment", "unknown")
+    confidence = claude_result.get("confidence", "unknown")
+
+    st.markdown("## AI Triage Assessment")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Assessment", assessment)
+
+    with col2:
+        st.metric("Confidence", confidence)
+
+    st.markdown("### Triage Summary")
+    st.write(claude_result.get("triage_summary", "No summary returned."))
+
+    st.markdown("### Why this may be suspicious")
+    for item in claude_result.get("why_suspicious", []):
+        st.write(f"- {item}")
+
+    st.markdown("### Why this may be benign")
+    for item in claude_result.get("why_could_be_benign", []):
+        st.write(f"- {item}")
+
+    st.markdown("### Missing evidence")
+    for item in claude_result.get("missing_evidence", []):
+        st.write(f"- {item}")
+
+    st.markdown("### Recommended next steps")
+    for item in claude_result.get("recommended_next_steps", []):
+        st.write(f"- {item}")
+
+    st.markdown("### Customer-facing summary")
+    st.info(claude_result.get("customer_facing_summary", "No customer summary returned."))
+
+    with st.expander("Internal analyst notes"):
+        st.write(claude_result.get("analyst_notes", "No analyst notes returned."))
+
+    with st.expander("MITRE interpretation"):
+        for item in claude_result.get("mitre_interpretation", []):
+            st.write(f"- {item}")
+
+
+def render_analysis(parsed_json: dict):
+    """
+    Advanced/debug analysis view.
+    """
+    pipeline = build_pipeline(parsed_json)
+
+    entities = pipeline["entities"]
+    enriched_table = pipeline["enriched_table"]
+    semantic_facts = pipeline["semantic_facts"]
+    mitre_analysis = pipeline["mitre_analysis"]
+    enriched_techniques = pipeline["enriched_techniques"]
+    evidence_bundle = pipeline["evidence_bundle"]
 
     st.subheader("1. Parsed / Generated UDM JSON")
     st.json(parsed_json)
@@ -122,7 +209,7 @@ def render_analysis(parsed_json: dict):
     )
 
     st.subheader("3. Highest-Value Semantic Facts")
-    st.caption("These facts will later become the clean evidence bundle for Claude.")
+    st.caption("These facts become the clean evidence bundle for Claude.")
 
     for fact in semantic_facts[:10]:
         with st.expander(
@@ -235,99 +322,53 @@ def render_analysis(parsed_json: dict):
     if data_mode == "Real":
         st.warning(
             "You selected Real mode. Only send real customer data to Claude if this is approved for your environment."
-    )
+        )
 
-    generate_claude = st.button("Generate Claude Triage Explanation")
-
-    if generate_claude:
+    if st.button("Generate Claude Triage Explanation", key="advanced_generate_claude_triage"):
         with st.spinner("Claude is analyzing the evidence bundle..."):
-            claude_result = ask_claude_for_triage(evidence_bundle)
+            st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
 
-        if "error" in claude_result:
-            st.error(claude_result["error"])
+    render_simple_claude_result(st.session_state.claude_result)
 
-            if "raw_response" in claude_result:
-                st.code(claude_result["raw_response"])
-        else:
-            st.markdown("### Claude Assessment")
-            st.write(f"**Assessment:** {claude_result.get('assessment', 'unknown')}")
-            st.write(f"**Confidence:** {claude_result.get('confidence', 'unknown')}")
+    st.subheader("7. Extracted SOC Entities")
 
-            st.markdown("### Triage Summary")
-            st.write(claude_result.get("triage_summary", "No summary returned."))
+    col1, col2, col3 = st.columns(3)
 
-            st.markdown("### Why Suspicious")
-            for item in claude_result.get("why_suspicious", []):
-                st.write(f"- {item}")
+    with col1:
+        st.markdown("### Alert Names")
+        st.write(entities["alert_names"] or "None detected")
 
-            st.markdown("### Why It Could Be Benign")
-            for item in claude_result.get("why_could_be_benign", []):
-                st.write(f"- {item}")
+        st.markdown("### Rule IDs")
+        st.write(entities["rule_ids"] or "None detected")
 
-            st.markdown("### Missing Evidence")
-            for item in claude_result.get("missing_evidence", []):
-                st.write(f"- {item}")
+        st.markdown("### Users")
+        st.write(entities["users"] or "None detected")
 
-            st.markdown("### Recommended Next Steps")
-            for item in claude_result.get("recommended_next_steps", []):
-                st.write(f"- {item}")
+        st.markdown("### Hosts")
+        st.write(entities["hosts"] or "None detected")
 
-            st.markdown("### MITRE Interpretation")
-            for item in claude_result.get("mitre_interpretation", []):
-                st.write(f"- {item}")
+    with col2:
+        st.markdown("### MITRE Tactics")
+        st.write(entities["mitre_tactics"] or "None detected")
 
-            st.markdown("### Customer-Facing Summary")
-            st.info(claude_result.get("customer_facing_summary", "No customer summary returned."))
+        st.markdown("### MITRE Techniques")
+        st.write(entities["mitre_techniques"] or "None detected")
 
-            st.markdown("### Analyst Notes")
-            st.write(claude_result.get("analyst_notes", "No analyst notes returned."))
-    else:
-        st.info("Claude has not been called yet. Click the button above when you are ready.")
+        st.markdown("### IPs")
+        st.write(entities["ips"] or "None detected")
 
-        st.subheader("7. Extracted SOC Entities")
+        st.markdown("### URLs")
+        st.write(entities["urls"] or "None detected")
 
-        col1, col2, col3 = st.columns(3)
+    with col3:
+        st.markdown("### Processes")
+        st.write(entities["processes"] or "None detected")
 
-        with col1:
-            st.markdown("### Alert Names")
-            st.write(entities["alert_names"] or "None detected")
+        st.markdown("### Command Lines")
+        st.write(entities["command_lines"] or "None detected")
 
-            st.markdown("### Rule IDs")
-            st.write(entities["rule_ids"] or "None detected")
-
-            st.markdown("### Users")
-            st.write(entities["users"] or "None detected")
-
-            st.markdown("### Hosts")
-            st.write(entities["hosts"] or "None detected")
-
-        with col2:
-            st.markdown("### MITRE Tactics")
-            st.write(entities["mitre_tactics"] or "None detected")
-
-            st.markdown("### MITRE Techniques")
-            st.write(entities["mitre_techniques"] or "None detected")
-
-            st.markdown("### IPs")
-            st.write(entities["ips"] or "None detected")
-
-            st.markdown("### URLs")
-            st.write(entities["urls"] or "None detected")
-
-        with col3:
-            st.markdown("### Processes")
-            st.write(entities["processes"] or "None detected")
-
-            st.markdown("### Command Lines")
-            st.write(entities["command_lines"] or "None detected")
-
-            st.markdown("### Hashes")
-            st.write(entities["hashes"] or "None detected")
-
-    st.subheader("8. Current MVP Status")
-    st.info(
-        "Guided UDM builder is active. The app now supports both raw UDM JSON and analyst-friendly manual alert input."
-    )
+        st.markdown("### Hashes")
+        st.write(entities["hashes"] or "None detected")
 
 
 def render_guided_builder():
@@ -485,8 +526,73 @@ def render_guided_builder():
 
         generated_udm = build_udm_from_guided_input(form_data)
 
-        st.success("Guided input converted into UDM-style key-value pairs.")
-        render_analysis(generated_udm)
+        st.session_state.current_alert = generated_udm
+        st.session_state.current_alert_source = "Analyst App - Guided Alert Builder"
+        st.session_state.claude_result = None
+
+        st.success("Guided input converted into UDM-style key-value pairs. Alert loaded for analysis.")
+
+
+def render_analyst_app():
+    """
+    Clean user-facing app mode.
+    Uses the guided builder as input, then shows a simplified Claude result.
+    """
+    st.subheader("SOC Alert Triage Assistant")
+    st.caption(
+        "Fill in the key alert details. The app converts them into a normalized UDM-style evidence model behind the scenes."
+    )
+
+    render_guided_builder()
+
+    if st.session_state.current_alert is None:
+        st.info("Build an alert using the guided form above to start the analyst workflow.")
+        return
+
+    st.divider()
+    st.caption(f"Current alert source: {st.session_state.current_alert_source}")
+
+    pipeline = build_pipeline(st.session_state.current_alert)
+
+    mitre_analysis = pipeline["mitre_analysis"]
+    semantic_facts = pipeline["semantic_facts"]
+    entities = pipeline["entities"]
+    evidence_bundle = pipeline["evidence_bundle"]
+
+    st.markdown("### Initial deterministic assessment")
+    st.write(f"**Initial verdict:** {mitre_analysis['initial_verdict']}")
+    st.write(f"**Overall severity:** {mitre_analysis['overall_severity']}")
+    st.write(f"**Summary:** {mitre_analysis['summary']}")
+
+    if mitre_analysis["matches"]:
+        with st.expander("Show matched suspicious patterns"):
+            for match in mitre_analysis["matches"]:
+                st.markdown(f"**{match['pattern_name']}**")
+                st.write(f"Severity: {match['severity']}")
+                st.write(f"Confidence: {match['confidence']}")
+                st.write(match["reason"])
+
+    if st.button("Generate AI Triage Summary", key="analyst_app_generate_claude"):
+        with st.spinner("Claude is analyzing the evidence bundle..."):
+            st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
+
+    render_simple_claude_result(st.session_state.claude_result)
+
+    with st.expander("Show technical evidence details"):
+        st.markdown("#### Generated UDM JSON")
+        st.json(st.session_state.current_alert)
+
+        st.markdown("#### Extracted entities")
+        st.json(entities)
+
+        st.markdown("#### Top semantic facts")
+        st.json(semantic_facts[:10])
+
+        st.markdown("#### MITRE analysis")
+        st.json(mitre_analysis)
+
+        st.markdown("#### Evidence bundle sent to Claude")
+        st.json(evidence_bundle)
 
 
 st.title("🛡️ UDM Triage Lab")
@@ -502,9 +608,14 @@ data_mode = st.radio(
     horizontal=True,
 )
 
-tab_json, tab_builder = st.tabs(["Paste UDM JSON", "Guided Alert Builder"])
+main_tab_lab, main_tab_analyst = st.tabs(["Advanced Lab", "Analyst App"])
 
-with tab_json:
+with main_tab_lab:
+    st.subheader("Advanced Lab")
+    st.caption(
+        "Developer/debug mode for raw UDM JSON, ontology inspection, MITRE enrichment and evidence bundle review."
+    )
+
     with st.expander("Show sample UDM alert"):
         st.code(json.dumps(sample_alert, indent=2), language="json")
 
@@ -512,10 +623,10 @@ with tab_json:
         "Paste UDM JSON here",
         height=300,
         value=json.dumps(sample_alert, indent=2),
-        key="raw_udm_json_input",
+        key="advanced_raw_udm_json_input",
     )
 
-    if st.button("Analyze Pasted Alert"):
+    if st.button("Analyze Pasted Alert", key="advanced_analyze_pasted_alert"):
         if not udm_input.strip():
             st.error("Please paste JSON first.")
         else:
@@ -528,21 +639,17 @@ with tab_json:
 
             else:
                 st.session_state.current_alert = parsed_json
-                st.session_state.current_alert_source = "Pasted UDM JSON"
+                st.session_state.current_alert_source = "Advanced Lab - Pasted UDM JSON"
                 st.session_state.claude_result = None
                 st.success("Valid JSON detected. Alert loaded for analysis.")
 
+    if st.session_state.current_alert is not None:
+        st.divider()
+        st.caption(f"Current alert source: {st.session_state.current_alert_source}")
+        render_analysis(st.session_state.current_alert)
+    else:
+        st.info("Paste a UDM alert above and click Analyze to start advanced analysis.")
 
-with tab_builder:
-    render_guided_builder()
 
-
-# GLOBAL ANALYSIS AREA
-# Important: this must NOT be indented under any tab.
-# It must start at the far left of the file.
-if st.session_state.current_alert is not None:
-    st.divider()
-    st.caption(f"Current alert source: {st.session_state.current_alert_source}")
-    render_analysis(st.session_state.current_alert)
-else:
-    st.info("Load an alert using one of the tabs above to start analysis.")
+with main_tab_analyst:
+    render_analyst_app()
