@@ -1,5 +1,6 @@
 import json
 import streamlit as st
+from html import escape
 
 from triage.attack_path import build_attack_path_hypothesis
 from triage.query_generator import generate_hunt_queries
@@ -28,7 +29,6 @@ st.set_page_config(
     page_icon="🛡️",
     layout="wide",
 )
-
 
 if "current_alert" not in st.session_state:
     st.session_state.current_alert = None
@@ -76,7 +76,70 @@ sample_alert = {
     "target.ip": "185.199.108.133",
 }
 
+def inject_compact_ui_css():
+    st.markdown(
+        """
+        <style>
+        .compact-card {
+            border: 1px solid rgba(128, 128, 128, 0.25);
+            border-radius: 12px;
+            padding: 0.75rem 0.9rem;
+            margin-bottom: 0.75rem;
+            background: rgba(250, 250, 250, 0.03);
+        }
 
+        .compact-card-title {
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+        }
+
+        .compact-bullets {
+            margin-top: 0.2rem;
+            margin-bottom: 0.2rem;
+            padding-left: 1.1rem;
+        }
+
+        .compact-bullets li {
+            font-size: 0.86rem;
+            line-height: 1.25;
+            margin-bottom: 0.22rem;
+        }
+
+        .compact-info {
+            font-size: 0.9rem;
+            line-height: 1.35;
+        }
+
+        .small-muted {
+            font-size: 0.78rem;
+            opacity: 0.72;
+        }
+
+        div[data-testid="stMetric"] {
+            border: 1px solid rgba(128, 128, 128, 0.22);
+            border-radius: 12px;
+            padding: 0.55rem 0.7rem;
+            background: rgba(250, 250, 250, 0.025);
+        }
+
+        div[data-testid="stMetric"] label {
+            font-size: 0.78rem !important;
+        }
+
+        div[data-testid="stMetric"] div {
+            font-size: 0.95rem !important;
+        }
+
+        .block-container {
+            padding-top: 1.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+inject_compact_ui_css()
 @st.cache_data(show_spinner=False)
 def get_mitre_knowledge():
     download_enterprise_attack(force=False)
@@ -141,9 +204,31 @@ def build_pipeline(parsed_json: dict):
         "hunt_queries": hunt_queries,
     }
 
+def render_compact_bullets(items, icon: str = "•", empty_message: str = "None returned."):
+    """
+    Render all bullets, but visually compact.
+    Content is not reduced.
+    """
+    if not items:
+        st.markdown(
+            f"<div class='small-muted'>{escape(empty_message)}</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    bullet_html = "<ul class='compact-bullets'>"
+
+    for item in items:
+        bullet_html += f"<li>{escape(icon)} {escape(str(item))}</li>"
+
+    bullet_html += "</ul>"
+
+    st.markdown(bullet_html, unsafe_allow_html=True)
+
 def render_simple_claude_result(claude_result: dict):
     """
-    Clean user-facing Claude result view for SOC analysts.
+    Compact user-facing Claude result view for SOC analysts.
+    Shows all content, but with smaller typography and tighter layout.
     """
     if not claude_result:
         st.info("Generate an AI triage explanation to see the analyst summary.")
@@ -159,8 +244,9 @@ def render_simple_claude_result(claude_result: dict):
 
     assessment = claude_result.get("assessment", "unknown")
     confidence = claude_result.get("confidence", "unknown")
+    triage_summary = claude_result.get("triage_summary", "No summary returned.")
 
-    st.markdown("## AI Triage Assessment")
+    st.markdown("### 🤖 AI triage result")
 
     col1, col2 = st.columns(2)
 
@@ -170,34 +256,88 @@ def render_simple_claude_result(claude_result: dict):
     with col2:
         st.metric("Confidence", confidence)
 
-    st.markdown("### Triage Summary")
-    st.write(claude_result.get("triage_summary", "No summary returned."))
+    st.markdown(
+        f"""
+        <div class="compact-card">
+            <div class="compact-card-title">🧠 What happened?</div>
+            <div class="compact-info">{escape(triage_summary)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.markdown("### Why this may be suspicious")
-    for item in claude_result.get("why_suspicious", []):
-        st.write(f"- {item}")
+    reasoning_tabs = st.tabs(
+        [
+            "🚨 Suspicious",
+            "🟢 Benign",
+            "🧩 Missing evidence",
+            "🧭 Next steps",
+        ]
+    )
 
-    st.markdown("### Why this may be benign")
-    for item in claude_result.get("why_could_be_benign", []):
-        st.write(f"- {item}")
+    with reasoning_tabs[0]:
+        st.markdown(
+            "<div class='compact-card-title'>Why this may be suspicious</div>",
+            unsafe_allow_html=True,
+        )
+        render_compact_bullets(
+            claude_result.get("why_suspicious", []),
+            icon="🚨",
+            empty_message="No suspicious reasoning returned.",
+        )
 
-    st.markdown("### Missing evidence")
-    for item in claude_result.get("missing_evidence", []):
-        st.write(f"- {item}")
+    with reasoning_tabs[1]:
+        st.markdown(
+            "<div class='compact-card-title'>Why this may be benign</div>",
+            unsafe_allow_html=True,
+        )
+        render_compact_bullets(
+            claude_result.get("why_could_be_benign", []),
+            icon="🟢",
+            empty_message="No benign explanations returned.",
+        )
 
-    st.markdown("### Recommended next steps")
-    for item in claude_result.get("recommended_next_steps", []):
-        st.write(f"- {item}")
+    with reasoning_tabs[2]:
+        st.markdown(
+            "<div class='compact-card-title'>Missing evidence to validate TP/FP</div>",
+            unsafe_allow_html=True,
+        )
+        render_compact_bullets(
+            claude_result.get("missing_evidence", []),
+            icon="🧩",
+            empty_message="No missing evidence returned.",
+        )
 
-    st.markdown("### Customer-facing summary")
-    st.info(claude_result.get("customer_facing_summary", "No customer summary returned."))
+    with reasoning_tabs[3]:
+        st.markdown(
+            "<div class='compact-card-title'>Recommended next investigation steps</div>",
+            unsafe_allow_html=True,
+        )
+        render_compact_bullets(
+            claude_result.get("recommended_next_steps", []),
+            icon="🧭",
+            empty_message="No next steps returned.",
+        )
 
-    with st.expander("Internal analyst notes"):
-        st.write(claude_result.get("analyst_notes", "No analyst notes returned."))
+    with st.expander("🧾 Customer-facing summary"):
+        st.info(claude_result.get("customer_facing_summary", "No customer summary returned."))
 
-    with st.expander("MITRE interpretation"):
-        for item in claude_result.get("mitre_interpretation", []):
-            st.write(f"- {item}")
+    with st.expander("🧬 Internal analyst notes and MITRE interpretation"):
+        st.markdown("#### Analyst notes")
+        st.markdown(
+            f"<div class='compact-info'>{escape(claude_result.get('analyst_notes', 'No analyst notes returned.'))}</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("#### MITRE interpretation")
+        render_compact_bullets(
+            claude_result.get("mitre_interpretation", []),
+            icon="🧬",
+            empty_message="No MITRE interpretation returned.",
+        )
+
+    with st.expander("🛠️ Raw AI response JSON"):
+        st.json(claude_result)
 
 def render_attack_path_visualizer(attack_path: dict, hunt_queries: dict, compact: bool = False):
     """
