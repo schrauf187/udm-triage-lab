@@ -109,3 +109,129 @@ def clean_json_response(text: str) -> str:
         text = text.removesuffix("```").strip()
 
     return text
+def build_followup_reassessment_prompt(
+    evidence_bundle: Dict[str, Any],
+    attack_path: Dict[str, Any],
+    original_claude_result: Dict[str, Any],
+    followup_evidence: str,
+) -> str:
+    return f"""
+You are a cautious SOC triage assistant.
+
+The analyst has already performed an initial triage and then ran follow-up hunts.
+Your job is to re-evaluate the case using:
+- the original normalized UDM-style evidence bundle
+- the original attack-path hypothesis
+- the original AI triage result
+- the analyst's follow-up hunting results / investigation notes
+
+Strict rules:
+- Use only the provided evidence and follow-up notes.
+- Do not invent facts.
+- Do not claim threat actor attribution.
+- Known groups using a technique are context only, not attribution.
+- If the follow-up evidence is weak or ambiguous, keep the assessment cautious.
+- Clearly explain what changed compared with the initial assessment.
+- Return valid JSON only. No markdown outside JSON.
+
+Required JSON schema:
+{{
+  "updated_assessment": "TRUE_POSITIVE | FALSE_POSITIVE | LIKELY_TRUE_POSITIVE | LIKELY_FALSE_POSITIVE | INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+  "updated_confidence": "low | medium | high",
+  "what_changed": ["change 1", "change 2"],
+  "supporting_evidence": ["evidence 1", "evidence 2"],
+  "evidence_against_malicious_activity": ["benign evidence 1", "benign evidence 2"],
+  "updated_attack_chain": ["phase 1", "phase 2"],
+  "remaining_gaps": ["gap 1", "gap 2"],
+  "recommended_escalation": "No escalation | Monitor | Escalate to L2 | Escalate to incident response",
+  "analyst_summary": "short internal analyst summary",
+  "customer_update": "short non-alarmist customer-facing update"
+}}
+
+Original evidence bundle:
+{json.dumps(evidence_bundle, indent=2)}
+
+Original attack-path hypothesis:
+{json.dumps(attack_path, indent=2)}
+
+Original AI triage result:
+{json.dumps(original_claude_result or {}, indent=2)}
+
+Analyst follow-up evidence / hunt results:
+{followup_evidence}
+"""
+
+def ask_claude_for_followup_reassessment(
+    evidence_bundle: Dict[str, Any],
+    attack_path: Dict[str, Any],
+    original_claude_result: Dict[str, Any],
+    followup_evidence: str,
+) -> Dict[str, Any]:
+    api_key = st.secrets.get("ANTHROPIC_API_KEY")
+
+    if not api_key:
+        return {
+            "error": "Missing ANTHROPIC_API_KEY in .streamlit/secrets.toml",
+            "updated_assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+            "updated_confidence": "low",
+        }
+
+    if not followup_evidence.strip():
+        return {
+            "error": "No follow-up evidence provided.",
+            "updated_assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+            "updated_confidence": "low",
+        }
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=1800,
+            temperature=0.2,
+            system=(
+                "You are a cautious SOC triage assistant. "
+                "You reason only from supplied evidence and return valid JSON only."
+            ),
+            messages=[
+                {
+                    "role": "user",
+                    "content": build_followup_reassessment_prompt(
+                        evidence_bundle=evidence_bundle,
+                        attack_path=attack_path,
+                        original_claude_result=original_claude_result or {},
+                        followup_evidence=followup_evidence,
+                    ),
+                }
+            ],
+        )
+
+        text = response.content[0].text.strip()
+
+        # Claude may wrap JSON in markdown fences.
+        if text.startswith("```json"):
+            text = text.removeprefix("```json").strip()
+
+        if text.startswith("```"):
+            text = text.removeprefix("```").strip()
+
+        if text.endswith("```"):
+            text = text.removesuffix("```").strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return {
+                "error": "Claude responded, but did not return valid JSON.",
+                "raw_response": text,
+                "updated_assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+                "updated_confidence": "low",
+            }
+
+    except Exception as error:
+        return {
+            "error": f"Unexpected Claude API error during follow-up reassessment: {type(error).__name__}: {error}",
+            "updated_assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+            "updated_confidence": "low",
+        }

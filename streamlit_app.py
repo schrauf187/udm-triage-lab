@@ -6,7 +6,10 @@ from triage.attack_path import build_attack_path_hypothesis
 from triage.query_generator import generate_hunt_queries
 
 from triage.evidence_bundle import build_evidence_bundle
-from triage.claude_client import ask_claude_for_triage
+from triage.claude_client import (
+    ask_claude_for_triage,
+    ask_claude_for_followup_reassessment,
+)
 
 from triage.extractors import flatten_json, extract_entities, build_key_value_table
 from triage.ontology import (
@@ -39,6 +42,8 @@ if "current_alert_source" not in st.session_state:
 if "claude_result" not in st.session_state:
     st.session_state.claude_result = None
 
+if "followup_result" not in st.session_state:
+    st.session_state.followup_result = None
 
 sample_alert = {
     "metadata.event_type": "PROCESS_LAUNCH",
@@ -598,6 +603,7 @@ def render_analysis(parsed_json: dict):
 
     render_simple_claude_result(st.session_state.claude_result)
 
+
     st.subheader("8. Extracted SOC Entities")
 
     col1, col2, col3 = st.columns(3)
@@ -797,6 +803,7 @@ def render_guided_builder():
         st.session_state.current_alert = generated_udm
         st.session_state.current_alert_source = "Analyst App - Guided Alert Builder"
         st.session_state.claude_result = None
+        st.session_state.followup_result = None
 
         st.success("Guided input converted into UDM-style key-value pairs. Alert loaded for analysis.")
 
@@ -929,7 +936,39 @@ def render_analyst_app():
 
     render_simple_claude_result(st.session_state.claude_result)
 
-    st.markdown("## 5. 🛠️ Technical details")
+    st.markdown("## 5. 🔁 Follow-up evidence re-evaluation")
+
+    st.caption(
+        "After running the validation hunts, paste the results or analyst notes here. "
+        "Claude will re-evaluate whether this looks like a true positive, false positive, or still inconclusive."
+    )
+
+    followup_evidence = st.text_area(
+        "Paste hunt results / investigation notes",
+        height=220,
+        placeholder=(
+            "Example:\n"
+            "- KQL found 3 more alerts on WIN-SRV-22\n"
+            "- PowerShell spawned certutil.exe\n"
+            "- Scheduled task created 4 minutes later\n"
+            "- Decoded command downloaded payload.ps1 from external URL\n"
+            "- No approved change ticket found\n"
+        ),
+        key="analyst_followup_evidence",
+    )
+
+    if st.button("Re-evaluate with Follow-up Evidence", key="analyst_app_followup_reassess"):
+        with st.spinner("Claude is re-evaluating the case using the follow-up evidence..."):
+            st.session_state.followup_result = ask_claude_for_followup_reassessment(
+                evidence_bundle=evidence_bundle,
+                attack_path=attack_path,
+                original_claude_result=st.session_state.claude_result or {},
+                followup_evidence=followup_evidence,
+            )
+
+    render_followup_reassessment_result(st.session_state.followup_result)
+
+    st.markdown("## 6. 🛠️ Technical details")
 
     with st.expander("Show technical evidence details"):
         st.markdown("#### Generated UDM JSON")
@@ -1005,6 +1044,99 @@ with main_tab_lab:
     else:
         st.info("Paste a UDM alert above and click Analyze to start advanced analysis.")
 
+def render_followup_reassessment_result(followup_result: dict):
+    """
+    Compact display for Claude follow-up reassessment after analyst hunt results.
+    """
+    if not followup_result:
+        st.info("Paste follow-up evidence and run re-evaluation to update TP/FP confidence.")
+        return
+
+    if "error" in followup_result:
+        st.error(followup_result["error"])
+
+        if "raw_response" in followup_result:
+            st.code(followup_result["raw_response"])
+
+        return
+
+    updated_assessment = followup_result.get("updated_assessment", "unknown")
+    updated_confidence = followup_result.get("updated_confidence", "unknown")
+    escalation = followup_result.get("recommended_escalation", "unknown")
+
+    st.markdown("### 🔁 Re-evaluated triage result")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Updated assessment", updated_assessment)
+
+    with col2:
+        st.metric("Updated confidence", updated_confidence)
+
+    with col3:
+        st.metric("Escalation", escalation)
+
+    st.markdown(
+        f"""
+        <div class="compact-card">
+            <div class="compact-card-title">🧠 Analyst summary</div>
+            <div class="compact-info">{escape(followup_result.get("analyst_summary", "No analyst summary returned."))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tabs = st.tabs(
+        [
+            "🔄 What changed",
+            "✅ Supporting evidence",
+            "🟢 Benign evidence",
+            "🧭 Updated chain",
+            "🧩 Remaining gaps",
+        ]
+    )
+
+    with tabs[0]:
+        render_compact_bullets(
+            followup_result.get("what_changed", []),
+            icon="🔄",
+            empty_message="No changes returned.",
+        )
+
+    with tabs[1]:
+        render_compact_bullets(
+            followup_result.get("supporting_evidence", []),
+            icon="✅",
+            empty_message="No supporting evidence returned.",
+        )
+
+    with tabs[2]:
+        render_compact_bullets(
+            followup_result.get("evidence_against_malicious_activity", []),
+            icon="🟢",
+            empty_message="No benign evidence returned.",
+        )
+
+    with tabs[3]:
+        render_compact_bullets(
+            followup_result.get("updated_attack_chain", []),
+            icon="🧭",
+            empty_message="No updated attack chain returned.",
+        )
+
+    with tabs[4]:
+        render_compact_bullets(
+            followup_result.get("remaining_gaps", []),
+            icon="🧩",
+            empty_message="No remaining gaps returned.",
+        )
+
+    with st.expander("🧾 Customer update"):
+        st.info(followup_result.get("customer_update", "No customer update returned."))
+
+    with st.expander("🛠️ Raw re-evaluation JSON"):
+        st.json(followup_result)
 
 with main_tab_analyst:
     render_analyst_app()
