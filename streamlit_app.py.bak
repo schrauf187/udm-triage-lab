@@ -826,8 +826,6 @@ def render_guided_builder():
         st.success("Guided input converted into UDM-style key-value pairs. Alert loaded for analysis.")
 
 
-
-
 def render_cti_research_result(cti_result: dict):
     """
     Compact display for optional AI CTI internet research.
@@ -944,330 +942,6 @@ def render_cti_research_result(cti_result: dict):
     with st.expander("Raw CTI JSON"):
         st.json(cti_result)
 
-
-def _quote_query_value(value: str) -> str:
-    value = str(value).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{value}"'
-
-
-def _regex_escape_light(value: str) -> str:
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace(".", "\\.")
-        .replace("-", "\\-")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("(", "\\(")
-        .replace(")", "\\)")
-    )
-
-
-def extract_cti_leads(cti_result: dict) -> list[str]:
-    """
-    Extract CTI-derived leads from the CTI result.
-
-    These are not treated as confirmed internal evidence.
-    They are used as additional hunting leads only.
-    """
-    if not cti_result or "error" in cti_result:
-        return []
-
-    leads = []
-
-    researched = cti_result.get("researched_indicators", {})
-    for key in [
-        "public_ips",
-        "domains",
-        "urls",
-        "hashes",
-        "mitre_techniques",
-        "sanitized_commandline_patterns",
-    ]:
-        values = researched.get(key, [])
-        if isinstance(values, list):
-            leads.extend(values)
-
-    for finding in cti_result.get("indicator_findings", []):
-        indicator = finding.get("indicator")
-        risk = str(finding.get("risk", "")).lower()
-
-        if indicator and risk in ["suspicious", "malicious", "unknown"]:
-            leads.append(indicator)
-
-    clean = []
-    for lead in leads:
-        lead = str(lead).strip()
-        if not lead:
-            continue
-        if lead not in clean:
-            clean.append(lead)
-
-    return clean[:30]
-
-
-def generate_cti_informed_hunts(cti_result: dict) -> dict:
-    """
-    Generate additional hunt queries from CTI-derived leads.
-
-    These queries are intentionally separate from the base validation hunts.
-    CTI leads are external research leads, not confirmed customer evidence.
-    """
-    leads = extract_cti_leads(cti_result)
-
-    if not leads:
-        return {}
-
-    quoted = ", ".join(_quote_query_value(lead) for lead in leads)
-    spl_terms = " OR ".join(_quote_query_value(lead) for lead in leads)
-    regex_terms = "|".join(_regex_escape_light(lead) for lead in leads[:20])
-
-    kql = f"""// Microsoft Sentinel / Defender XDR - CTI-informed validation hunt
-// These are CTI-derived leads. They are not confirmed internal evidence until found in your environment.
-let cti_leads = dynamic([{quoted}]);
-let lookback = 24h;
-
-SecurityAlert
-| where TimeGenerated > ago(lookback)
-| where tostring(Entities) has_any (cti_leads)
-   or AlertName has_any (cti_leads)
-   or Description has_any (cti_leads)
-   or tostring(ExtendedProperties) has_any (cti_leads)
-   or Techniques has_any (cti_leads)
-| project TimeGenerated, AlertName, ProviderName, ProductName, Severity, Tactics, Techniques, Entities, Description
-| order by TimeGenerated desc;
-
-// Optional endpoint telemetry hunts if Defender tables are available:
-DeviceNetworkEvents
-| where Timestamp > ago(lookback)
-| where RemoteIP has_any (cti_leads)
-   or RemoteUrl has_any (cti_leads)
-   or InitiatingProcessCommandLine has_any (cti_leads)
-| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, RemoteUrl, RemoteIP, RemotePort, ActionType
-| order by Timestamp desc;
-
-DeviceProcessEvents
-| where Timestamp > ago(lookback)
-| where ProcessCommandLine has_any (cti_leads)
-   or InitiatingProcessCommandLine has_any (cti_leads)
-   or FileName has_any (cti_leads)
-| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine
-| order by Timestamp desc;
-"""
-
-    spl = f"""# Splunk - CTI-informed validation hunt
-# These are CTI-derived leads. They are not confirmed internal evidence until found in logs.
-index=* earliest=-24h
-({spl_terms})
-| table _time index sourcetype host user src src_ip dest dest_ip url domain signature rule_name alert_name severity process command_line
-| sort - _time
-"""
-
-    yara_l = f"""// Google SecOps YARA-L - CTI-informed validation hunt
-// Validate field names against parser/UDM mappings before production use.
-rule hunt_cti_informed_leads {{
-  meta:
-    description = "Hunt for CTI-derived leads from UDM Triage Lab"
-    author = "UDM Triage Lab"
-
-  events:
-    (
-      $e.target.ip = /{regex_terms}/ nocase or
-      $e.principal.ip = /{regex_terms}/ nocase or
-      $e.target.url = /{regex_terms}/ nocase or
-      $e.target.domain.name = /{regex_terms}/ nocase or
-      $e.security_result.rule_name = /{regex_terms}/ nocase or
-      $e.principal.process.command_line = /{regex_terms}/ nocase
-    )
-
-  condition:
-    $e
-}}
-"""
-
-    crowdstrike = f"""// CrowdStrike Next-Gen SIEM / LogScale-style CTI-informed hunt
-// These are CTI-derived leads. Validate field names in your environment.
-#event_simpleName=/Alert|Detection|Incident|ProcessRollup2|SyntheticProcessRollup2|DnsRequest|NetworkConnectIP4/i
-| /{regex_terms}/i
-| table([@timestamp, event_simpleName, ComputerName, UserName, DetectName, Severity, CommandLine, ParentBaseFileName, ImageFileName, RemoteAddress, DomainName])
-| sort(@timestamp, order=desc)
-"""
-
-    return {
-        "kql": kql,
-        "spl": spl,
-        "yara_l": yara_l,
-        "crowdstrike_ngsiem": crowdstrike,
-        "leads": leads,
-    }
-
-
-def render_cti_informed_hunts(cti_result: dict):
-    """
-    Render CTI-informed hunt queries after CTI has run.
-    """
-    if not cti_result:
-        st.info("Run CTI internet research to generate CTI-informed hunting leads.")
-        return
-
-    if "error" in cti_result:
-        st.warning("CTI-informed hunts are unavailable because CTI research returned an error.")
-        return
-
-    hunts = generate_cti_informed_hunts(cti_result)
-
-    if not hunts:
-        st.info("No CTI-derived leads were available for additional hunting.")
-        return
-
-    st.markdown("### 🎯 CTI-informed validation hunts")
-    st.caption(
-        "These queries add CTI-derived leads to the base hunt. "
-        "Finding these in your environment can support or weaken the attack-path hypothesis."
-    )
-
-    with st.expander("CTI-derived leads used in these hunts", expanded=True):
-        render_compact_bullets(
-            hunts.get("leads", []),
-            icon="🎯",
-            empty_message="No CTI leads available.",
-        )
-
-    tabs = st.tabs(["KQL", "SPL", "YARA-L", "CrowdStrike NGSIEM"])
-
-    with tabs[0]:
-        st.code(hunts.get("kql", ""), language="kql")
-
-    with tabs[1]:
-        st.code(hunts.get("spl", ""), language="spl")
-
-    with tabs[2]:
-        st.code(hunts.get("yara_l", ""), language="yara")
-
-    with tabs[3]:
-        st.code(hunts.get("crowdstrike_ngsiem", ""), language="text")
-
-
-def render_followup_reassessment_result(followup_result: dict):
-    """
-    Compact display for AI follow-up reassessment after analyst hunt results.
-    """
-    if not followup_result:
-        st.info("Paste follow-up evidence and run re-evaluation to update TP/FP confidence.")
-        return
-
-    if "error" in followup_result:
-        st.error(followup_result["error"])
-
-        if "raw_response" in followup_result:
-            st.code(followup_result["raw_response"])
-
-        return
-
-    updated_assessment = followup_result.get("updated_assessment", "unknown")
-    updated_confidence = followup_result.get("updated_confidence", "unknown")
-    escalation = followup_result.get("recommended_escalation", "unknown")
-
-    st.markdown("### 🔁 Re-evaluated triage result")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric("Updated assessment", updated_assessment)
-
-    with col2:
-        st.metric("Updated confidence", updated_confidence)
-
-    with col3:
-        st.metric("Escalation", escalation)
-
-    st.markdown(
-        f"""
-        <div class="compact-card">
-            <div class="compact-card-title">🧠 Analyst summary</div>
-            <div class="compact-info">{escape(followup_result.get("analyst_summary", "No analyst summary returned."))}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    tabs = st.tabs(
-        [
-            "🔄 What changed",
-            "✅ Supporting evidence",
-            "🟢 Benign evidence",
-            "🧭 Updated chain",
-            "🧩 Remaining gaps",
-        ]
-    )
-
-    with tabs[0]:
-        render_compact_bullets(
-            followup_result.get("what_changed", []),
-            icon="🔄",
-            empty_message="No changes returned.",
-        )
-
-    with tabs[1]:
-        render_compact_bullets(
-            followup_result.get("supporting_evidence", []),
-            icon="✅",
-            empty_message="No supporting evidence returned.",
-        )
-
-    with tabs[2]:
-        render_compact_bullets(
-            followup_result.get("evidence_against_malicious_activity", []),
-            icon="🟢",
-            empty_message="No benign evidence returned.",
-        )
-
-    with tabs[3]:
-        render_compact_bullets(
-            followup_result.get("updated_attack_chain", []),
-            icon="🧭",
-            empty_message="No updated attack chain returned.",
-        )
-
-    with tabs[4]:
-        render_compact_bullets(
-            followup_result.get("remaining_gaps", []),
-            icon="🧩",
-            empty_message="No remaining gaps returned.",
-        )
-
-    with st.expander("🧭 Attack-path opinion"):
-        st.write(followup_result.get("attack_path_opinion", "No attack-path opinion returned."))
-        st.write(f"**CTI relevance:** {followup_result.get('cti_relevance', 'No CTI relevance returned.')}")
-
-        st.markdown("#### Confirmed phases")
-        render_compact_bullets(
-            followup_result.get("confirmed_attack_phases", []),
-            icon="✅",
-            empty_message="No confirmed phases returned.",
-        )
-
-        st.markdown("#### Hypothesized phases")
-        render_compact_bullets(
-            followup_result.get("hypothesized_attack_phases", []),
-            icon="🔎",
-            empty_message="No hypothesized phases returned.",
-        )
-
-        st.markdown("#### Not observed phases")
-        render_compact_bullets(
-            followup_result.get("not_observed_attack_phases", []),
-            icon="⚪",
-            empty_message="No not-observed phases returned.",
-        )
-
-    with st.expander("🧾 Customer update"):
-        st.info(followup_result.get("customer_update", "No customer update returned."))
-
-    with st.expander("🛠️ Raw re-evaluation JSON"):
-        st.json(followup_result)
-
-
 def render_analyst_app():
     """
     Clean user-facing app mode.
@@ -1381,7 +1055,7 @@ def render_analyst_app():
                 )
                 st.divider()
 
-    st.markdown("## 3. 🧭 Initial attack path and base validation hunts")
+    st.markdown("## 3. 🧭 Attack path and validation hunts")
 
     render_attack_path_visualizer(
         attack_path=attack_path,
@@ -1389,7 +1063,36 @@ def render_analyst_app():
         compact=True,
     )
 
-    st.markdown("## 4. 🌐 Optional AI CTI internet research")
+    st.markdown("## 4. 🤖 AI triage explanation")
+
+    if st.button("Generate AI Triage Summary", key="analyst_app_generate_claude"):
+        with st.spinner("Claude is analyzing the evidence bundle..."):
+            st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
+
+    render_simple_claude_result(st.session_state.claude_result)
+
+    st.markdown("## 5. 🔁 Follow-up evidence re-evaluation")
+
+    st.caption(
+        "After running the validation hunts, paste the results or analyst notes here. "
+        "Claude will re-evaluate whether this looks like a true positive, false positive, or still inconclusive."
+    )
+
+    followup_evidence = st.text_area(
+        "Paste hunt results / investigation notes",
+        height=220,
+        placeholder=(
+            "Example:\n"
+            "- KQL found 3 more alerts on WIN-SRV-22\n"
+            "- PowerShell spawned certutil.exe\n"
+            "- Scheduled task created 4 minutes later\n"
+            "- Decoded command downloaded payload.ps1 from external URL\n"
+            "- No approved change ticket found\n"
+        ),
+        key="analyst_followup_evidence",
+    )
+
+    st.markdown("### 🌐 Optional AI CTI Internet Research")
 
     st.warning(
         "This optional CTI research sends only selected public indicators to external internet research: "
@@ -1401,7 +1104,7 @@ def render_analyst_app():
         flattened=pipeline["flattened"],
         entities=entities,
         mitre_analysis=mitre_analysis,
-        followup_evidence="",
+        followup_evidence=followup_evidence,
     )
 
     st.session_state.cti_package = cti_package
@@ -1426,24 +1129,6 @@ def render_analyst_app():
                 st.session_state.cti_researched = True
 
         render_cti_research_result(st.session_state.cti_result)
-
-    st.markdown("## 5. 🎯 CTI-informed validation hunts")
-    render_cti_informed_hunts(st.session_state.cti_result)
-
-    st.markdown("## 6. 🤖 AI triage explanation")
-
-    if st.button("Generate AI Triage Summary", key="analyst_app_generate_claude"):
-        with st.spinner("AI is analyzing the evidence bundle..."):
-            st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
-
-    render_simple_claude_result(st.session_state.claude_result)
-
-    st.markdown("## 7. 🔁 Follow-up evidence re-evaluation")
-
-    st.caption(
-        "After running the validation hunts, paste the results or analyst notes here. "
-        "The AI will re-evaluate whether this looks like a true positive, false positive, or still inconclusive."
-    )
 
     followup_evidence = st.text_area(
         "Paste hunt results / investigation notes",
@@ -1471,7 +1156,7 @@ def render_analyst_app():
 
     render_followup_reassessment_result(st.session_state.followup_result)
 
-    st.markdown("## 8. 🛠️ Technical details")
+    st.markdown("## 6. 🛠️ Technical details")
 
     with st.expander("Show technical evidence details"):
         st.markdown("#### Generated UDM JSON")
@@ -1489,9 +1174,8 @@ def render_analyst_app():
         st.markdown("#### Attack path hypothesis")
         st.json(attack_path)
 
-        st.markdown("#### Evidence bundle sent to AI")
+        st.markdown("#### Evidence bundle sent to Claude")
         st.json(evidence_bundle)
-
 
 st.title("🛡️ UDM Triage Lab")
 st.caption("Paste UDM-style alert JSON or build an alert using analyst-friendly fields.")
@@ -1539,10 +1223,6 @@ with main_tab_lab:
                 st.session_state.current_alert = parsed_json
                 st.session_state.current_alert_source = "Advanced Lab - Pasted UDM JSON"
                 st.session_state.claude_result = None
-                st.session_state.followup_result = None
-                st.session_state.cti_result = None
-                st.session_state.cti_researched = False
-                st.session_state.cti_package = None
                 st.success("Valid JSON detected. Alert loaded for analysis.")
 
     if st.session_state.current_alert is not None:
@@ -1552,6 +1232,215 @@ with main_tab_lab:
     else:
         st.info("Paste a UDM alert above and click Analyze to start advanced analysis.")
 
+def render_followup_reassessment_result(followup_result: dict):
+    """
+    Compact display for Claude follow-up reassessment after analyst hunt results.
+    """
+    if not followup_result:
+        st.info("Paste follow-up evidence and run re-evaluation to update TP/FP confidence.")
+        return
+
+    if "error" in followup_result:
+        st.error(followup_result["error"])
+
+        if "raw_response" in followup_result:
+            st.code(followup_result["raw_response"])
+
+        return
+
+    updated_assessment = followup_result.get("updated_assessment", "unknown")
+    updated_confidence = followup_result.get("updated_confidence", "unknown")
+    escalation = followup_result.get("recommended_escalation", "unknown")
+
+    st.markdown("### 🔁 Re-evaluated triage result")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric("Updated assessment", updated_assessment)
+
+    with col2:
+        st.metric("Updated confidence", updated_confidence)
+
+    with col3:
+        st.metric("Escalation", escalation)
+
+    st.markdown(
+        f"""
+        <div class="compact-card">
+            <div class="compact-card-title">🧠 Analyst summary</div>
+            <div class="compact-info">{escape(followup_result.get("analyst_summary", "No analyst summary returned."))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    def render_cti_research_result(cti_result: dict):
+        """
+        Compact display for optional AI CTI internet research.
+        """
+        if not cti_result:
+            st.info("No CTI internet research has been run yet.")
+        return
+
+        if "error" in cti_result:
+            st.error(cti_result["error"])
+
+        if "raw_response" in cti_result:
+            st.code(cti_result["raw_response"])
+
+        return
+
+    st.markdown("### 🌐 AI CTI research result")
+
+    st.markdown(
+        f"""
+        <div class="compact-card">
+            <div class="compact-card-title">🧠 CTI summary</div>
+            <div class="compact-info">{escape(cti_result.get("cti_summary", "No CTI summary returned."))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Confidence impact", cti_result.get("confidence_impact", "unknown"))
+
+    with col2:
+        usage = cti_result.get("web_search_usage", {}).get("web_search_requests", "unknown")
+        st.metric("Web searches used", usage)
+
+    with st.expander("Indicator findings", expanded=True):
+        findings = cti_result.get("indicator_findings", [])
+
+        if not findings:
+            st.write("No indicator findings returned.")
+        else:
+            for finding in findings:
+                st.markdown(f"**{finding.get('indicator', 'unknown')}**")
+                st.markdown(
+                    f"""
+                    <div class="compact-info">
+                    <b>Type:</b> {escape(str(finding.get("indicator_type", "unknown")))}<br>
+                    <b>Risk:</b> {escape(str(finding.get("risk", "unknown")))}<br>
+                    <b>Confidence:</b> {escape(str(finding.get("confidence", "unknown")))}<br>
+                    <b>Finding:</b> {escape(str(finding.get("finding", "")))}<br>
+                    <b>Source summary:</b> {escape(str(finding.get("source_summary", "")))}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.divider()
+
+    with st.expander("Attack-path relevance"):
+        st.write(cti_result.get("attack_path_relevance", "No attack-path relevance returned."))
+
+        st.markdown("#### CTI-supported phases")
+        render_compact_bullets(
+            cti_result.get("cti_supported_phases", []),
+            icon="✅",
+            empty_message="No supported phases returned.",
+        )
+
+        st.markdown("#### CTI-not-supported phases")
+        render_compact_bullets(
+            cti_result.get("cti_not_supported_phases", []),
+            icon="⚪",
+            empty_message="No unsupported phases returned.",
+        )
+
+    with st.expander("Customer-facing CTI summary"):
+        st.info(cti_result.get("customer_cti_summary", "No customer CTI summary returned."))
+
+    with st.expander("Sources / citations"):
+        sources = cti_result.get("sources", [])
+        citations = cti_result.get("citations", [])
+
+        if sources:
+            st.markdown("#### Sources from AI response")
+            for source in sources:
+                title = source.get("title", "Untitled source")
+                url = source.get("url", "")
+                relevance = source.get("relevance", "")
+
+                if url:
+                    st.write(f"- [{title}]({url}) — {relevance}")
+                else:
+                    st.write(f"- {title} — {relevance}")
+
+        if citations:
+            st.markdown("#### API citation metadata")
+            for citation in citations:
+                title = citation.get("title", "Untitled citation")
+                url = citation.get("url", "")
+                cited_text = citation.get("cited_text", "")
+
+                if url:
+                    st.write(f"- [{title}]({url})")
+                else:
+                    st.write(f"- {title}")
+
+                if cited_text:
+                    st.caption(cited_text)
+
+        if not sources and not citations:
+            st.write("No source metadata returned.")
+
+    with st.expander("Raw CTI JSON"):
+        st.json(cti_result)
+
+    tabs = st.tabs(
+        [
+            "🔄 What changed",
+            "✅ Supporting evidence",
+            "🟢 Benign evidence",
+            "🧭 Updated chain",
+            "🧩 Remaining gaps",
+        ]
+    )
+
+    with tabs[0]:
+        render_compact_bullets(
+            followup_result.get("what_changed", []),
+            icon="🔄",
+            empty_message="No changes returned.",
+        )
+
+    with tabs[1]:
+        render_compact_bullets(
+            followup_result.get("supporting_evidence", []),
+            icon="✅",
+            empty_message="No supporting evidence returned.",
+        )
+
+    with tabs[2]:
+        render_compact_bullets(
+            followup_result.get("evidence_against_malicious_activity", []),
+            icon="🟢",
+            empty_message="No benign evidence returned.",
+        )
+
+    with tabs[3]:
+        render_compact_bullets(
+            followup_result.get("updated_attack_chain", []),
+            icon="🧭",
+            empty_message="No updated attack chain returned.",
+        )
+
+    with tabs[4]:
+        render_compact_bullets(
+            followup_result.get("remaining_gaps", []),
+            icon="🧩",
+            empty_message="No remaining gaps returned.",
+        )
+
+    with st.expander("🧾 Customer update"):
+        st.info(followup_result.get("customer_update", "No customer update returned."))
+
+    with st.expander("🛠️ Raw re-evaluation JSON"):
+        st.json(followup_result)
 
 with main_tab_analyst:
     render_analyst_app()
