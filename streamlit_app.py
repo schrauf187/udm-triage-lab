@@ -584,9 +584,9 @@ def render_analysis(parsed_json: dict):
         compact=False,
     )
 
-    st.subheader("7. Claude AI Triage Explanation")
+    st.subheader("7. AI Triage Explanation")
     st.caption(
-        "Claude receives the structured evidence bundle and produces a cautious SOC triage explanation."
+        "The Triage AI receives the structured evidence bundle and produces a cautious SOC triage explanation."
     )
 
     with st.expander("Preview evidence bundle sent to Claude"):
@@ -597,8 +597,8 @@ def render_analysis(parsed_json: dict):
             "You selected Real mode. Only send real customer data to Claude if this is approved for your environment."
         )
 
-    if st.button("Generate Claude Triage Explanation", key="advanced_generate_claude_triage"):
-        with st.spinner("Claude is analyzing the evidence bundle..."):
+    if st.button("Generate AI Triage Explanation", key="advanced_generate_claude_triage"):
+        with st.spinner("AI is analyzing the evidence bundle..."):
             st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
 
     render_simple_claude_result(st.session_state.claude_result)
@@ -958,7 +958,7 @@ def render_analyst_app():
     )
 
     if st.button("Re-evaluate with Follow-up Evidence", key="analyst_app_followup_reassess"):
-        with st.spinner("Claude is re-evaluating the case using the follow-up evidence..."):
+        with st.spinner("AI is re-evaluating the case using the follow-up evidence..."):
             st.session_state.followup_result = ask_claude_for_followup_reassessment(
                 evidence_bundle=evidence_bundle,
                 attack_path=attack_path,
