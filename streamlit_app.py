@@ -1,6 +1,9 @@
 import json
 import streamlit as st
 
+from triage.evidence_bundle import build_evidence_bundle
+from triage.claude_client import ask_claude_for_triage
+
 from triage.extractors import flatten_json, extract_entities, build_key_value_table
 from triage.ontology import (
     load_udm_ontology,
@@ -22,6 +25,15 @@ st.set_page_config(
     page_icon="🛡️",
     layout="wide",
 )
+
+if "current_alert" not in st.session_state:
+    st.session_state.current_alert = None
+
+if "current_alert_source" not in st.session_state:
+    st.session_state.current_alert_source = None
+
+if "claude_result" not in st.session_state:
+    st.session_state.claude_result = None
 
 
 sample_alert = {
@@ -85,6 +97,15 @@ def render_analysis(parsed_json: dict):
     except Exception as error:
         enriched_techniques = []
         st.warning(f"MITRE enrichment is currently unavailable: {error}")
+
+    evidence_bundle = build_evidence_bundle(
+    parsed_json=parsed_json,
+    entities=entities,
+    semantic_facts=semantic_facts,
+    mitre_analysis=mitre_analysis,
+    enriched_techniques=enriched_techniques,
+    data_mode=data_mode,
+    )
 
     st.subheader("1. Parsed / Generated UDM JSON")
     st.json(parsed_json)
@@ -203,47 +224,107 @@ def render_analysis(parsed_json: dict):
                     "Group/software overlap is context only. This is not threat actor attribution."
                 )
 
-    st.subheader("6. Extracted SOC Entities")
+    st.subheader("6. Claude AI Triage Explanation")
+    st.caption(
+        "Claude receives the structured evidence bundle and produces a cautious SOC triage explanation."
+    )
 
-    col1, col2, col3 = st.columns(3)
+    with st.expander("Preview evidence bundle sent to Claude"):
+        st.json(evidence_bundle)
 
-    with col1:
-        st.markdown("### Alert Names")
-        st.write(entities["alert_names"] or "None detected")
+    if data_mode == "Real":
+        st.warning(
+            "You selected Real mode. Only send real customer data to Claude if this is approved for your environment."
+    )
 
-        st.markdown("### Rule IDs")
-        st.write(entities["rule_ids"] or "None detected")
+    generate_claude = st.button("Generate Claude Triage Explanation")
 
-        st.markdown("### Users")
-        st.write(entities["users"] or "None detected")
+    if generate_claude:
+        with st.spinner("Claude is analyzing the evidence bundle..."):
+            claude_result = ask_claude_for_triage(evidence_bundle)
 
-        st.markdown("### Hosts")
-        st.write(entities["hosts"] or "None detected")
+        if "error" in claude_result:
+            st.error(claude_result["error"])
 
-    with col2:
-        st.markdown("### MITRE Tactics")
-        st.write(entities["mitre_tactics"] or "None detected")
+            if "raw_response" in claude_result:
+                st.code(claude_result["raw_response"])
+        else:
+            st.markdown("### Claude Assessment")
+            st.write(f"**Assessment:** {claude_result.get('assessment', 'unknown')}")
+            st.write(f"**Confidence:** {claude_result.get('confidence', 'unknown')}")
 
-        st.markdown("### MITRE Techniques")
-        st.write(entities["mitre_techniques"] or "None detected")
+            st.markdown("### Triage Summary")
+            st.write(claude_result.get("triage_summary", "No summary returned."))
 
-        st.markdown("### IPs")
-        st.write(entities["ips"] or "None detected")
+            st.markdown("### Why Suspicious")
+            for item in claude_result.get("why_suspicious", []):
+                st.write(f"- {item}")
 
-        st.markdown("### URLs")
-        st.write(entities["urls"] or "None detected")
+            st.markdown("### Why It Could Be Benign")
+            for item in claude_result.get("why_could_be_benign", []):
+                st.write(f"- {item}")
 
-    with col3:
-        st.markdown("### Processes")
-        st.write(entities["processes"] or "None detected")
+            st.markdown("### Missing Evidence")
+            for item in claude_result.get("missing_evidence", []):
+                st.write(f"- {item}")
 
-        st.markdown("### Command Lines")
-        st.write(entities["command_lines"] or "None detected")
+            st.markdown("### Recommended Next Steps")
+            for item in claude_result.get("recommended_next_steps", []):
+                st.write(f"- {item}")
 
-        st.markdown("### Hashes")
-        st.write(entities["hashes"] or "None detected")
+            st.markdown("### MITRE Interpretation")
+            for item in claude_result.get("mitre_interpretation", []):
+                st.write(f"- {item}")
 
-    st.subheader("7. Current MVP Status")
+            st.markdown("### Customer-Facing Summary")
+            st.info(claude_result.get("customer_facing_summary", "No customer summary returned."))
+
+            st.markdown("### Analyst Notes")
+            st.write(claude_result.get("analyst_notes", "No analyst notes returned."))
+    else:
+        st.info("Claude has not been called yet. Click the button above when you are ready.")
+
+        st.subheader("7. Extracted SOC Entities")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("### Alert Names")
+            st.write(entities["alert_names"] or "None detected")
+
+            st.markdown("### Rule IDs")
+            st.write(entities["rule_ids"] or "None detected")
+
+            st.markdown("### Users")
+            st.write(entities["users"] or "None detected")
+
+            st.markdown("### Hosts")
+            st.write(entities["hosts"] or "None detected")
+
+        with col2:
+            st.markdown("### MITRE Tactics")
+            st.write(entities["mitre_tactics"] or "None detected")
+
+            st.markdown("### MITRE Techniques")
+            st.write(entities["mitre_techniques"] or "None detected")
+
+            st.markdown("### IPs")
+            st.write(entities["ips"] or "None detected")
+
+            st.markdown("### URLs")
+            st.write(entities["urls"] or "None detected")
+
+        with col3:
+            st.markdown("### Processes")
+            st.write(entities["processes"] or "None detected")
+
+            st.markdown("### Command Lines")
+            st.write(entities["command_lines"] or "None detected")
+
+            st.markdown("### Hashes")
+            st.write(entities["hashes"] or "None detected")
+
+    st.subheader("8. Current MVP Status")
     st.info(
         "Guided UDM builder is active. The app now supports both raw UDM JSON and analyst-friendly manual alert input."
     )
@@ -440,17 +521,28 @@ with tab_json:
         else:
             try:
                 parsed_json = json.loads(udm_input)
-                st.success("Valid JSON detected.")
-                render_analysis(parsed_json)
 
             except json.JSONDecodeError as error:
                 st.error("Invalid JSON.")
                 st.code(str(error))
 
-            except FileNotFoundError:
-                st.error(
-                    "Ontology file not found. Please create ontology/udm_ontology.yaml."
-                )
+            else:
+                st.session_state.current_alert = parsed_json
+                st.session_state.current_alert_source = "Pasted UDM JSON"
+                st.session_state.claude_result = None
+                st.success("Valid JSON detected. Alert loaded for analysis.")
+
 
 with tab_builder:
     render_guided_builder()
+
+
+# GLOBAL ANALYSIS AREA
+# Important: this must NOT be indented under any tab.
+# It must start at the far left of the file.
+if st.session_state.current_alert is not None:
+    st.divider()
+    st.caption(f"Current alert source: {st.session_state.current_alert_source}")
+    render_analysis(st.session_state.current_alert)
+else:
+    st.info("Load an alert using one of the tabs above to start analysis.")
