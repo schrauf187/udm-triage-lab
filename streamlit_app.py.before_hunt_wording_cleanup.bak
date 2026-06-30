@@ -437,9 +437,9 @@ def render_attack_path_visualizer(attack_path: dict, hunt_queries: dict, compact
 
             st.warning(attack_path.get("attribution_warning"))
 
-    st.markdown("### Alert-centric hunts")
+    st.markdown("### Validation hunting queries")
     st.caption(
-        "These are alert-centric hunts. The goal is to find related alerts or events for the same host, user, IP, URL, process, or MITRE technique. If any hunt returns a hit, paste the relevant rows or analyst notes into the follow-up evidence section so the AI can re-evaluate the case and MITRE kill chain."
+        "These are alert-centric hunts. The goal is to find related alerts or events for the same host, user, IP, URL, process, or MITRE technique."
     )
 
     with st.expander("Validation objective", expanded=not compact):
@@ -944,239 +944,6 @@ def render_cti_research_result(cti_result: dict):
         st.json(cti_result)
 
 
-
-
-def _quote_query_value(value: str) -> str:
-    value = str(value).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{value}"'
-
-
-def _regex_escape_light(value: str) -> str:
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace(".", "\\.")
-        .replace("-", "\\-")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("(", "\\(")
-        .replace(")", "\\)")
-        .replace("/", "\\/")
-    )
-
-
-def extract_cti_leads(cti_result: dict) -> list[str]:
-    """
-    Extract IOC-style CTI leads only.
-
-    MITRE TTPs are intentionally excluded here because this section is for IOC hunts.
-    TTPs remain useful in the alert validation hunts above.
-    """
-    if not cti_result or "error" in cti_result:
-        return []
-
-    leads = []
-
-    researched = cti_result.get("researched_indicators", {})
-
-    for key in [
-        "public_ips",
-        "domains",
-        "urls",
-        "hashes",
-        "sanitized_commandline_patterns",
-    ]:
-        values = researched.get(key, [])
-        if isinstance(values, list):
-            leads.extend(values)
-
-    for finding in cti_result.get("indicator_findings", []):
-        indicator = finding.get("indicator")
-        indicator_type = str(finding.get("indicator_type", "")).lower()
-
-        # Do not add MITRE technique/TTP entries into IOC hunts.
-        if indicator_type in ["technique", "ttp", "mitre"]:
-            continue
-
-        if indicator:
-            leads.append(indicator)
-
-    clean = []
-
-    for lead in leads:
-        lead = str(lead).strip()
-
-        if not lead:
-            continue
-
-        # Extra guardrail against MITRE/TTP values.
-        if lead.upper().startswith("T") and len(lead) <= 10:
-            continue
-
-        if lead not in clean:
-            clean.append(lead)
-
-    return clean[:30]
-
-
-def generate_cti_informed_hunts(cti_result: dict) -> dict:
-    """
-    Generate IOC hunts from CTI-derived public indicators.
-
-    These are not confirmed customer-environment findings until the analyst finds
-    them in internal telemetry.
-    """
-    leads = extract_cti_leads(cti_result)
-
-    if not leads:
-        return {}
-
-    quoted = ", ".join(_quote_query_value(lead) for lead in leads)
-    spl_terms = " OR ".join(_quote_query_value(lead) for lead in leads)
-    regex_terms = "|".join(_regex_escape_light(lead) for lead in leads[:20])
-
-    kql = f"""// Microsoft Sentinel / Defender XDR - IOC hunt from CTI
-// These are CTI-derived IOCs / public indicators.
-// They are NOT confirmed internal evidence until found in your environment.
-let ioc_leads = dynamic([{quoted}]);
-let lookback = 24h;
-
-SecurityAlert
-| where TimeGenerated > ago(lookback)
-| where tostring(Entities) has_any (ioc_leads)
-   or AlertName has_any (ioc_leads)
-   or Description has_any (ioc_leads)
-   or tostring(ExtendedProperties) has_any (ioc_leads)
-| project TimeGenerated, AlertName, ProviderName, ProductName, Severity, Tactics, Techniques, Entities, Description
-| order by TimeGenerated desc;
-
-// Endpoint network telemetry:
-DeviceNetworkEvents
-| where Timestamp > ago(lookback)
-| where RemoteIP has_any (ioc_leads)
-   or RemoteUrl has_any (ioc_leads)
-   or InitiatingProcessCommandLine has_any (ioc_leads)
-| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, RemoteUrl, RemoteIP, RemotePort, ActionType
-| order by Timestamp desc;
-
-// Endpoint process telemetry:
-DeviceProcessEvents
-| where Timestamp > ago(lookback)
-| where ProcessCommandLine has_any (ioc_leads)
-   or InitiatingProcessCommandLine has_any (ioc_leads)
-   or FileName has_any (ioc_leads)
-| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, FileName, ProcessCommandLine
-| order by Timestamp desc;
-
-// File/hash telemetry:
-DeviceFileEvents
-| where Timestamp > ago(lookback)
-| where SHA256 has_any (ioc_leads)
-   or SHA1 has_any (ioc_leads)
-   or MD5 has_any (ioc_leads)
-   or FolderPath has_any (ioc_leads)
-| project Timestamp, DeviceName, AccountName, InitiatingProcessFileName, ActionType, FileName, FolderPath, SHA256
-| order by Timestamp desc;
-"""
-
-    spl = f"""# Splunk - IOC hunt from CTI
-# These are CTI-derived IOCs / public indicators.
-# They are NOT confirmed internal evidence until found in logs.
-index=* earliest=-24h
-({spl_terms})
-| table _time index sourcetype host user src src_ip dest dest_ip url domain signature rule_name alert_name severity process command_line file_hash
-| sort - _time
-"""
-
-    yara_l = f"""// Google SecOps YARA-L - IOC hunt from CTI
-// Validate field names against parser/UDM mappings before production use.
-rule hunt_cti_ioc_leads {{
-  meta:
-    description = "Hunt for CTI-derived IOC leads from UDM Triage Lab"
-    author = "UDM Triage Lab"
-
-  events:
-    (
-      $e.target.ip = /{regex_terms}/ nocase or
-      $e.principal.ip = /{regex_terms}/ nocase or
-      $e.target.url = /{regex_terms}/ nocase or
-      $e.target.domain.name = /{regex_terms}/ nocase or
-      $e.principal.process.command_line = /{regex_terms}/ nocase or
-      $e.target.file.sha256 = /{regex_terms}/ nocase
-    )
-
-  condition:
-    $e
-}}
-"""
-
-    crowdstrike = f"""// CrowdStrike Next-Gen SIEM / LogScale-style IOC hunt from CTI
-// These are CTI-derived IOCs / public indicators.
-// Validate field names in your environment.
-#event_simpleName=/Alert|Detection|Incident|ProcessRollup2|SyntheticProcessRollup2|DnsRequest|NetworkConnectIP4|FileWritten/i
-| /{regex_terms}/i
-| table([@timestamp, event_simpleName, ComputerName, UserName, DetectName, Severity, CommandLine, ParentBaseFileName, ImageFileName, RemoteAddress, DomainName, SHA256HashData])
-| sort(@timestamp, order=desc)
-"""
-
-    return {
-        "kql": kql,
-        "spl": spl,
-        "yara_l": yara_l,
-        "crowdstrike_ngsiem": crowdstrike,
-        "leads": leads,
-    }
-
-
-def render_cti_informed_hunts(cti_result: dict):
-    """
-    Render IOC hunts after CTI has run.
-    """
-    if not cti_result:
-        st.info("Run CTI internet research to generate IOC hunts.")
-        return
-
-    if "error" in cti_result:
-        st.warning("IOC hunts are unavailable because CTI research returned an error.")
-        return
-
-    hunts = generate_cti_informed_hunts(cti_result)
-
-    if not hunts:
-        st.info("No CTI-derived IOCs were available for additional hunting.")
-        return
-
-    st.markdown("### 🎯 IOC hunts from CTI")
-    st.caption(
-        "These hunts use CTI-derived IOCs and public indicators only. "
-        "MITRE TTPs are intentionally not included here because they are not IOC search terms. "
-        "Use the alert validation hunts above for TTP-based alert grouping. "
-        "If any IOC is found in your environment, paste the matching rows into the follow-up evidence section. "
-        "Only internal telemetry hits should be treated as confirmed evidence."
-    )
-
-    with st.expander("CTI-derived IOC leads used in these hunts", expanded=True):
-        render_compact_bullets(
-            hunts.get("leads", []),
-            icon="🎯",
-            empty_message="No CTI IOC leads available.",
-        )
-
-    tabs = st.tabs(["KQL", "SPL", "YARA-L", "CrowdStrike NGSIEM"])
-
-    with tabs[0]:
-        st.code(hunts.get("kql", ""), language="kql")
-
-    with tabs[1]:
-        st.code(hunts.get("spl", ""), language="spl")
-
-    with tabs[2]:
-        st.code(hunts.get("yara_l", ""), language="yara")
-
-    with tabs[3]:
-        st.code(hunts.get("crowdstrike_ngsiem", ""), language="text")
-
-
 def render_followup_reassessment_result(followup_result: dict):
     """
     Compact display for AI follow-up reassessment after analyst hunt results.
@@ -1410,15 +1177,7 @@ def render_analyst_app():
                 )
                 st.divider()
 
-    st.markdown("## 3. 🤖 AI summary")
-
-    if st.button("Generate AI Triage Summary", key="analyst_app_generate_claude"):
-        with st.spinner("AI is analyzing the evidence bundle..."):
-            st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
-
-    render_simple_claude_result(st.session_state.claude_result)
-
-    st.markdown("## 4. 🧭 Attack path and alert validation hunts")
+    st.markdown("## 3. 🧭 Attack path and validation hunts")
 
     render_attack_path_visualizer(
         attack_path=attack_path,
@@ -1426,19 +1185,48 @@ def render_analyst_app():
         compact=True,
     )
 
-    st.markdown("## 5. 🌐 AI CTI research and IOC hunts")
+    st.markdown("## 4. 🤖 AI triage explanation")
+
+    if st.button("Generate AI Triage Summary", key="analyst_app_generate_claude"):
+        with st.spinner("AI is analyzing the evidence bundle..."):
+            st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
+
+    render_simple_claude_result(st.session_state.claude_result)
+
+    st.markdown("## 5. 🔁 Follow-up evidence re-evaluation")
+
+    st.caption(
+        "After running the validation hunts, paste the results or analyst notes here. "
+        "The AI will re-evaluate whether this looks like a true positive, false positive, or still inconclusive."
+    )
+
+    followup_evidence = st.text_area(
+        "Paste hunt results / investigation notes",
+        height=220,
+        placeholder=(
+            "Example:\n"
+            "- KQL found 3 more alerts on WIN-SRV-22\n"
+            "- PowerShell spawned certutil.exe\n"
+            "- Scheduled task created 4 minutes later\n"
+            "- Decoded command downloaded payload.ps1 from external URL\n"
+            "- No approved change ticket found\n"
+        ),
+        key="analyst_followup_evidence",
+    )
+
+    st.markdown("### 🌐 Optional AI CTI Internet Research")
 
     st.warning(
         "This optional CTI research sends only selected public indicators to external internet research: "
-        "public IPs, domains, URLs, hashes, and sanitized command-line patterns. "
-        "Hostnames, usernames, local file paths, process full paths, internal IPs, raw command lines, and MITRE TTPs are blocked from IOC research."
+        "public IPs, domains, URLs, hashes, MITRE techniques, and sanitized command-line patterns. "
+        "Hostnames, usernames, local file paths, process full paths, internal IPs, and raw command lines are blocked."
     )
 
     cti_package = build_safe_cti_research_package(
         flattened=pipeline["flattened"],
         entities=entities,
         mitre_analysis=mitre_analysis,
-        followup_evidence="",
+        followup_evidence=followup_evidence,
     )
 
     st.session_state.cti_package = cti_package
@@ -1464,29 +1252,6 @@ def render_analyst_app():
 
         render_cti_research_result(st.session_state.cti_result)
 
-    render_cti_informed_hunts(st.session_state.cti_result)
-
-    st.markdown("## 6. 🔁 Follow-up evidence re-evaluation")
-
-    st.caption(
-        "After running the alert validation hunts and optional IOC hunts, paste any hits, relevant rows, or analyst notes here. "
-        "The AI will re-evaluate whether this looks like a true positive, false positive, or still inconclusive, and update the MITRE kill-chain interpretation."
-    )
-
-    followup_evidence = st.text_area(
-        "Paste hunt results / investigation notes",
-        height=220,
-        placeholder=(
-            "Example:\n"
-            "- Alert validation hunt found additional related Defender alert\n"
-            "- IOC hunt found the CTI domain on the same host\n"
-            "- PowerShell spawned certutil.exe\n"
-            "- Scheduled task created 4 minutes later\n"
-            "- No approved change ticket found\n"
-        ),
-        key="analyst_followup_evidence",
-    )
-
     if st.button("Re-evaluate with Follow-up Evidence", key="analyst_app_followup_reassess"):
         with st.spinner("AI is re-evaluating the case using the follow-up evidence..."):
             st.session_state.followup_result = ask_claude_for_followup_reassessment(
@@ -1499,9 +1264,9 @@ def render_analyst_app():
 
     render_followup_reassessment_result(st.session_state.followup_result)
 
-    st.markdown("---")
+    st.markdown("## 6. 🛠️ Technical details")
 
-    with st.expander("🛠️ Technical details"):
+    with st.expander("Show technical evidence details"):
         st.markdown("#### Generated UDM JSON")
         st.json(st.session_state.current_alert)
 
