@@ -1,6 +1,9 @@
 import json
 import streamlit as st
 
+from triage.attack_path import build_attack_path_hypothesis
+from triage.query_generator import generate_hunt_queries
+
 from triage.evidence_bundle import build_evidence_bundle
 from triage.claude_client import ask_claude_for_triage
 
@@ -78,8 +81,6 @@ sample_alert = {
 def get_mitre_knowledge():
     download_enterprise_attack(force=False)
     return build_mitre_knowledge()
-
-
 def build_pipeline(parsed_json: dict):
     """
     Shared evidence pipeline used by both Advanced Lab and Analyst App.
@@ -102,6 +103,23 @@ def build_pipeline(parsed_json: dict):
         enriched_techniques = []
         st.warning(f"MITRE enrichment is currently unavailable: {error}")
 
+    # 1. Build attack-path hypothesis first
+    attack_path = build_attack_path_hypothesis(
+        flattened=flattened,
+        entities=entities,
+        mitre_analysis=mitre_analysis,
+        enriched_techniques=enriched_techniques,
+    )
+
+    # 2. Then generate hunt queries using that attack path
+    hunt_queries = generate_hunt_queries(
+        flattened=flattened,
+        entities=entities,
+        mitre_analysis=mitre_analysis,
+        attack_path=attack_path,
+    )
+
+    # 3. Build Claude evidence bundle
     evidence_bundle = build_evidence_bundle(
         parsed_json=parsed_json,
         entities=entities,
@@ -119,8 +137,9 @@ def build_pipeline(parsed_json: dict):
         "mitre_analysis": mitre_analysis,
         "enriched_techniques": enriched_techniques,
         "evidence_bundle": evidence_bundle,
+        "attack_path": attack_path,
+        "hunt_queries": hunt_queries,
     }
-
 
 def render_simple_claude_result(claude_result: dict):
     """
@@ -180,6 +199,105 @@ def render_simple_claude_result(claude_result: dict):
         for item in claude_result.get("mitre_interpretation", []):
             st.write(f"- {item}")
 
+def render_attack_path_visualizer(attack_path: dict, hunt_queries: dict, compact: bool = False):
+    """
+    Prototype attack-path / kill-chain layout based on MITRE TTPs and extracted evidence.
+    """
+    st.markdown("### Attack Path Hypothesis")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Likely position", attack_path.get("observed_position", "Unknown"))
+
+    with col2:
+        st.metric("Confidence", attack_path.get("confidence", "unknown"))
+
+    st.info(attack_path.get("summary", "No attack-path summary available."))
+
+    st.markdown("#### Kill-chain interpretation")
+
+    stage_rows = []
+
+    for row in attack_path.get("kill_chain_table", []):
+        status = row.get("status", "Not observed")
+
+        if status == "Observed in this alert":
+            visual_status = "✅ Observed"
+        elif status == "Possible previous step":
+            visual_status = "⬅️ Possible previous"
+        elif status == "Possible next step":
+            visual_status = "🔎 Possible next"
+        elif status == "Later-stage hunt":
+            visual_status = "🧭 Hunt later stage"
+        else:
+            visual_status = "⚪ Not observed"
+
+        stage_rows.append(
+            {
+                "Phase": row.get("phase"),
+                "Status": visual_status,
+                "Mapped TTPs": row.get("mapped_ttps"),
+                "Evidence seen": row.get("evidence_seen"),
+                "Validation focus": row.get("hunt_focus"),
+            }
+        )
+
+    st.dataframe(
+        stage_rows,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    with st.expander("Why this attack path hypothesis was created", expanded=not compact):
+        st.markdown("#### Reasoning")
+        for item in attack_path.get("reasoning", []):
+            st.write(f"- {item}")
+
+        st.markdown("#### Possible previous steps")
+        for item in attack_path.get("possible_previous_steps", []):
+            st.write(f"- {item}")
+
+        st.markdown("#### Possible next steps")
+        for item in attack_path.get("possible_next_steps", []):
+            st.write(f"- {item}")
+
+    known_groups = attack_path.get("known_groups_context", [])
+    known_software = attack_path.get("known_software_context", [])
+
+    if known_groups or known_software:
+        with st.expander("Known MITRE actor/software overlap — context only"):
+            if known_groups:
+                st.markdown("#### Known groups using related techniques")
+                st.write(", ".join(known_groups))
+
+            if known_software:
+                st.markdown("#### Known software/tools using related techniques")
+                st.write(", ".join(known_software))
+
+            st.warning(attack_path.get("attribution_warning"))
+
+    st.markdown("### Validation hunting queries")
+    st.caption(
+        "These are alert-centric hunts. The goal is to find related alerts or events for the same host, user, IP, URL, process, or MITRE technique."
+    )
+
+    with st.expander("Validation objective", expanded=not compact):
+        st.write(hunt_queries.get("validation_objective", ""))
+
+    query_tabs = st.tabs(["KQL", "SPL", "YARA-L", "CrowdStrike NGSIEM"])
+
+    with query_tabs[0]:
+        st.code(hunt_queries.get("kql", ""), language="kql")
+
+    with query_tabs[1]:
+        st.code(hunt_queries.get("spl", ""), language="spl")
+
+    with query_tabs[2]:
+        st.code(hunt_queries.get("yara_l", ""), language="yara")
+
+    with query_tabs[3]:
+        st.code(hunt_queries.get("crowdstrike_ngsiem", ""), language="text")
 
 def render_analysis(parsed_json: dict):
     """
@@ -193,6 +311,8 @@ def render_analysis(parsed_json: dict):
     mitre_analysis = pipeline["mitre_analysis"]
     enriched_techniques = pipeline["enriched_techniques"]
     evidence_bundle = pipeline["evidence_bundle"]
+    attack_path = pipeline["attack_path"]
+    hunt_queries = pipeline["hunt_queries"]
 
     st.subheader("1. Parsed / Generated UDM JSON")
     st.json(parsed_json)
@@ -311,7 +431,15 @@ def render_analysis(parsed_json: dict):
                     "Group/software overlap is context only. This is not threat actor attribution."
                 )
 
-    st.subheader("6. Claude AI Triage Explanation")
+
+    st.subheader("6. Attack Path Hypothesis & Validation Hunts")
+    render_attack_path_visualizer(
+        attack_path=attack_path,
+        hunt_queries=hunt_queries,
+        compact=False,
+    )
+
+    st.subheader("7. Claude AI Triage Explanation")
     st.caption(
         "Claude receives the structured evidence bundle and produces a cautious SOC triage explanation."
     )
@@ -330,7 +458,7 @@ def render_analysis(parsed_json: dict):
 
     render_simple_claude_result(st.session_state.claude_result)
 
-    st.subheader("7. Extracted SOC Entities")
+    st.subheader("8. Extracted SOC Entities")
 
     col1, col2, col3 = st.columns(3)
 
@@ -558,6 +686,8 @@ def render_analyst_app():
     semantic_facts = pipeline["semantic_facts"]
     entities = pipeline["entities"]
     evidence_bundle = pipeline["evidence_bundle"]
+    attack_path = pipeline["attack_path"]
+    hunt_queries = pipeline["hunt_queries"]
 
     st.markdown("### Initial deterministic assessment")
     st.write(f"**Initial verdict:** {mitre_analysis['initial_verdict']}")
@@ -593,6 +723,13 @@ def render_analyst_app():
 
         st.markdown("#### Evidence bundle sent to Claude")
         st.json(evidence_bundle)
+    
+    st.markdown("### Attack path and validation hunts")
+    render_attack_path_visualizer(
+        attack_path=attack_path,
+        hunt_queries=hunt_queries,
+        compact=True,
+    )
 
 
 st.title("🛡️ UDM Triage Lab")
