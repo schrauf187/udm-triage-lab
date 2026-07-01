@@ -466,7 +466,6 @@ def render_analysis(parsed_json: dict):
     pipeline = build_pipeline(parsed_json)
 
     entities = pipeline["entities"]
-    flattened = pipeline["flattened"]
     enriched_table = pipeline["enriched_table"]
     semantic_facts = pipeline["semantic_facts"]
     mitre_analysis = pipeline["mitre_analysis"]
@@ -661,562 +660,171 @@ def render_analysis(parsed_json: dict):
         st.write(entities["hashes"] or "None detected")
 
 
-
-def remove_empty_udm_values(data: dict) -> dict:
-    """
-    Remove empty optional UDM fields before sending the alert into the pipeline.
-    This keeps the ontology table, AI prompt, and CTI package clean.
-    """
-    clean = {}
-
-    for key, value in data.items():
-        if value is None:
-            continue
-
-        if isinstance(value, str) and not value.strip():
-            continue
-
-        if value in [[], {}, ""]:
-            continue
-
-        clean[key] = value
-
-    return clean
-
-
-def _reset_analysis_state_for_new_alert():
-    """
-    Reset AI / CTI / follow-up state whenever a new alert is loaded.
-    """
-    st.session_state.claude_result = None
-    st.session_state.followup_result = None
-    st.session_state.cti_result = None
-    st.session_state.cti_researched = False
-    st.session_state.cti_package = None
-
-
-def _load_alert_into_session(alert: dict, source: str):
-    """
-    Load an alert into the shared app session.
-    """
-    st.session_state.current_alert = alert
-    st.session_state.current_alert_source = source
-    _reset_analysis_state_for_new_alert()
-
-
-def _safe_widget_key(prefix: str, field_name: str) -> str:
-    """
-    Turn a UDM field name into a safe Streamlit widget key.
-    """
-    return (
-        f"{prefix}_{field_name}"
-        .replace(".", "_")
-        .replace("[", "_")
-        .replace("]", "")
-        .replace("/", "_")
-        .replace(" ", "_")
-        .replace("-", "_")
-    )
-
-
-def _is_multiline_udm_field(field_name: str) -> bool:
-    """
-    Fields that are usually long and should use a text_area instead of text_input.
-    """
-    multiline_markers = [
-        "description",
-        "summary",
-        "command_line",
-        "detection_fields",
-        "request.url",
-        "user_agent",
-    ]
-    return any(marker in field_name for marker in multiline_markers)
-
-
-UDM_GUIDED_FIELD_SECTIONS = {
-    "Metadata": [
-        "metadata.event_type",
-        "metadata.vendor_name",
-        "metadata.product_name",
-        "metadata.product_event_type",
-        "metadata.event_timestamp",
-        "metadata.ingested_timestamp",
-        "metadata.description",
-        "metadata.log_type",
-    ],
-    "Principal": [
-        "principal.ip",
-        "principal.hostname",
-        "principal.asset.hostname",
-        "principal.asset.asset_id",
-        "principal.user.userid",
-        "principal.user.email_addresses[0]",
-        "principal.process.command_line",
-        "principal.process.pid",
-        "principal.process.file.full_path",
-        "principal.process.file.name",
-        "principal.process.parent_process.file.full_path",
-        "principal.process.parent_process.file.name",
-    ],
-    "Target": [
-        "target.ip",
-        "target.hostname",
-        "target.user.userid",
-        "target.file.full_path",
-        "target.file.name",
-        "target.file.sha256",
-        "target.process.command_line",
-        "target.domain.name",
-        "target.url",
-        "target.port",
-        "target.application",
-    ],
-    "Security Result": [
-        "security_result.action",
-        "security_result.severity",
-        "security_result.priority",
-        "security_result.risk_score",
-        "security_result.summary",
-        "security_result.category",
-        "security_result.description",
-        "security_result.rule_name",
-        "security_result.rule_id",
-        "security_result.display_name",
-        "security_result.detection_fields",
-    ],
-    "Network": [
-        "network.application_protocol",
-        "network.ip_protocol",
-        "network.direction",
-        "network.session_id",
-        "network.sent_bytes",
-        "network.received_bytes",
-        "network.src_port",
-        "network.dst_port",
-        "network.connection.count",
-    ],
-    "Process": [
-        "process.pid",
-        "process.parent_pid",
-        "process.command_line",
-        "process.file.full_path",
-        "process.file.name",
-        "process.file.sha256",
-    ],
-    "File": [
-        "file.full_path",
-        "file.sha256",
-        "file.md5",
-        "file.file_name",
-        "file.size",
-    ],
-    "DNS": [
-        "network.dns.questions.name",
-        "network.dns.answers.data",
-    ],
-    "HTTP": [
-        "network.http.method",
-        "network.http.request.url",
-        "network.http.response.code",
-        "network.http.user_agent",
-    ],
-    "Authentication": [
-        "authentication.auth_type",
-        "authentication.mechanism",
-        "authentication.status",
-        "extensions.auth.mechanism",
-        "extensions.auth.result",
-        "extensions.auth.device_trust_type",
-        "extensions.auth.conditional_access_status",
-        "extensions.auth.user_agent",
-    ],
-    "MITRE": [
-        "security_result.attack_details.tactics[0].id",
-        "security_result.attack_details.tactics[0].name",
-        "security_result.attack_details.tactics[1].id",
-        "security_result.attack_details.tactics[1].name",
-        "security_result.attack_details.tactics[2].id",
-        "security_result.attack_details.tactics[2].name",
-        "security_result.attack_details.techniques[0].id",
-        "security_result.attack_details.techniques[0].name",
-        "security_result.attack_details.techniques[1].id",
-        "security_result.attack_details.techniques[1].name",
-        "security_result.attack_details.techniques[2].id",
-        "security_result.attack_details.techniques[2].name",
-        "security_result.attack_details.techniques[3].id",
-        "security_result.attack_details.techniques[3].name",
-    ],
-}
-
-
-UDM_FIELD_PLACEHOLDERS = {
-    "metadata.event_type": "PROCESS_LAUNCH / USER_LOGIN / NETWORK_CONNECTION / EMAIL_TRANSACTION / USER_RESOURCE_ACCESS",
-    "metadata.vendor_name": "Microsoft / CrowdStrike / Zscaler / Google / Palo Alto",
-    "metadata.product_name": "Defender for Endpoint / Falcon / Entra ID / ZIA / Azure",
-    "metadata.log_type": "EDR_DETECTION / AAD_SIGNIN / WEB_PROXY / AZURE_ACTIVITY",
-    "principal.user.userid": "user or service account",
-    "principal.user.email_addresses[0]": "user@example.com",
-    "principal.asset.hostname": "WIN-SRV-22",
-    "principal.ip": "203.0.113.45",
-    "principal.process.command_line": "powershell.exe -enc ...",
-    "target.ip": "45.83.12.91",
-    "target.domain.name": "example-domain.com",
-    "target.url": "hxxps://example-domain[.]com/path",
-    "security_result.rule_name": "Detection / rule name",
-    "security_result.summary": "Short alert summary",
-    "security_result.description": "Longer alert description",
-    "network.application_protocol": "HTTP / HTTPS / DNS / SMB",
-    "network.direction": "OUTBOUND / INBOUND / INTERNAL",
-    "network.http.user_agent": "Mozilla/5.0 ...",
-    "authentication.mechanism": "MFA / Password / Token / SSO",
-    "authentication.status": "SUCCESS / FAILURE",
-}
-
-
-
-UDM_SECTION_DISPLAY_NAMES = {
-    "Metadata": "Alert / Incident Metadata",
-    "Principal": "Source / Acting Entity",
-    "Target": "Destination / Affected Entity",
-    "Security Result": "Detection / Security Result",
-    "Network": "Network Session",
-    "Process": "Process Evidence",
-    "File": "File Evidence",
-    "DNS": "DNS Evidence",
-    "HTTP": "HTTP Evidence",
-    "Authentication": "Authentication Context",
-    "MITRE": "MITRE ATT&CK Context",
-}
-
-
-UDM_FIELD_LABELS = {
-    "metadata.event_type": "Event type",
-    "metadata.vendor_name": "Vendor",
-    "metadata.product_name": "Product",
-    "metadata.product_event_type": "Vendor event type",
-    "metadata.event_timestamp": "Event timestamp",
-    "metadata.ingested_timestamp": "Ingested timestamp",
-    "metadata.description": "Metadata description",
-    "metadata.log_type": "Log type",
-
-    "principal.ip": "Source / acting IP",
-    "principal.hostname": "Source hostname",
-    "principal.asset.hostname": "Source asset hostname",
-    "principal.asset.asset_id": "Source asset ID",
-    "principal.user.userid": "Acting user ID",
-    "principal.user.email_addresses[0]": "Acting user email",
-    "principal.process.command_line": "Source process command line",
-    "principal.process.pid": "Source process PID",
-    "principal.process.file.full_path": "Source process full path",
-    "principal.process.file.name": "Source process name",
-    "principal.process.parent_process.file.full_path": "Parent process full path",
-    "principal.process.parent_process.file.name": "Parent process name",
-
-    "target.ip": "Destination / target IP",
-    "target.hostname": "Destination hostname",
-    "target.user.userid": "Target user ID",
-    "target.file.full_path": "Target file full path",
-    "target.file.name": "Target file name",
-    "target.file.sha256": "Target file SHA256",
-    "target.process.command_line": "Target process command line",
-    "target.domain.name": "Destination domain",
-    "target.url": "Destination URL",
-    "target.port": "Destination port",
-    "target.application": "Target application",
-
-    "security_result.action": "Detection action",
-    "security_result.severity": "Severity",
-    "security_result.priority": "Priority",
-    "security_result.risk_score": "Risk score",
-    "security_result.summary": "Alert summary",
-    "security_result.category": "Detection category",
-    "security_result.description": "Alert description",
-    "security_result.rule_name": "Rule name",
-    "security_result.rule_id": "Rule ID",
-    "security_result.display_name": "Display name",
-    "security_result.detection_fields": "Detection fields / matched evidence",
-
-    "network.application_protocol": "Application protocol",
-    "network.ip_protocol": "IP protocol",
-    "network.direction": "Direction",
-    "network.session_id": "Session ID",
-    "network.sent_bytes": "Sent bytes",
-    "network.received_bytes": "Received bytes",
-    "network.src_port": "Source port",
-    "network.dst_port": "Destination port",
-    "network.connection.count": "Connection count",
-
-    "process.pid": "Process PID",
-    "process.parent_pid": "Parent PID",
-    "process.command_line": "Observed process command line",
-    "process.file.full_path": "Observed process full path",
-    "process.file.name": "Observed process name",
-    "process.file.sha256": "Observed process SHA256",
-
-    "file.full_path": "File full path",
-    "file.sha256": "File SHA256",
-    "file.md5": "File MD5",
-    "file.file_name": "File name",
-    "file.size": "File size",
-
-    "network.dns.questions.name": "DNS query name",
-    "network.dns.answers.data": "DNS answer data",
-
-    "network.http.method": "HTTP method",
-    "network.http.request.url": "HTTP request URL",
-    "network.http.response.code": "HTTP response code",
-    "network.http.user_agent": "HTTP user agent",
-
-    "authentication.auth_type": "Authentication type",
-    "authentication.mechanism": "Authentication mechanism",
-    "authentication.status": "Authentication status",
-    "extensions.auth.mechanism": "Auth mechanism",
-    "extensions.auth.result": "Auth result",
-    "extensions.auth.device_trust_type": "Device trust type",
-    "extensions.auth.conditional_access_status": "Conditional access status",
-    "extensions.auth.user_agent": "Auth user agent",
-
-    "security_result.attack_details.tactics[0].id": "MITRE tactic 1 ID",
-    "security_result.attack_details.tactics[0].name": "MITRE tactic 1 name",
-    "security_result.attack_details.tactics[1].id": "MITRE tactic 2 ID",
-    "security_result.attack_details.tactics[1].name": "MITRE tactic 2 name",
-    "security_result.attack_details.tactics[2].id": "MITRE tactic 3 ID",
-    "security_result.attack_details.tactics[2].name": "MITRE tactic 3 name",
-    "security_result.attack_details.techniques[0].id": "MITRE technique 1 ID",
-    "security_result.attack_details.techniques[0].name": "MITRE technique 1 name",
-    "security_result.attack_details.techniques[1].id": "MITRE technique 2 ID",
-    "security_result.attack_details.techniques[1].name": "MITRE technique 2 name",
-    "security_result.attack_details.techniques[2].id": "MITRE technique 3 ID",
-    "security_result.attack_details.techniques[2].name": "MITRE technique 3 name",
-    "security_result.attack_details.techniques[3].id": "MITRE technique 4 ID",
-    "security_result.attack_details.techniques[3].name": "MITRE technique 4 name",
-}
-
-
-UDM_FIELD_HELP = {
-    "metadata.event_type": "High-level event type, for example PROCESS_LAUNCH, USER_LOGIN, NETWORK_CONNECTION, EMAIL_TRANSACTION, USER_RESOURCE_ACCESS.",
-    "metadata.product_event_type": "Original event type from the vendor product, if available.",
-    "metadata.log_type": "Useful for identifying the data source, for example EDR_DETECTION, AAD_SIGNIN, WEB_PROXY, AZURE_ACTIVITY.",
-    "metadata.event_timestamp": "When the security event happened.",
-    "metadata.ingested_timestamp": "When the event arrived in the SIEM/data platform.",
-
-    "principal.ip": "The source or acting IP. For identity alerts this is often the sign-in IP. For network alerts this is the client/source IP.",
-    "principal.asset.hostname": "The source/acting host, device, or workload that generated the activity.",
-    "principal.user.userid": "The acting user or service account.",
-    "principal.user.email_addresses[0]": "Email address of the acting user. Useful for identity and email investigations.",
-    "principal.process.command_line": "Command line of the source/acting process. Sensitive: this is not sent raw to CTI research.",
-    "principal.process.file.full_path": "Full path of the source/acting process, for example powershell.exe path. Sensitive: not sent to CTI research.",
-
-    "target.ip": "The destination, target, or second IP. For impossible travel this may represent the second sign-in IP. For network alerts this is the remote IP.",
-    "target.hostname": "Destination or affected host name.",
-    "target.domain.name": "Destination domain. This can be used for CTI if it is public and not customer-sensitive.",
-    "target.url": "Destination URL. This can be used for CTI if it is public and not customer-sensitive.",
-    "target.application": "Application or cloud service accessed, for example Microsoft Azure Portal.",
-    "target.file.sha256": "SHA256 of the target/downloaded file. Good CTI indicator if public and non-sensitive.",
-
-    "security_result.action": "What the security product did, for example ALLOW, BLOCK, DETECT, QUARANTINE.",
-    "security_result.category": "Detection category, for example malware, identity, suspicious_login, cloud_control_plane.",
-    "security_result.detection_fields": "Any matched fields or evidence returned by the detection rule.",
-    "security_result.risk_score": "Numeric score if the product provides one.",
-
-    "network.direction": "Traffic direction, for example OUTBOUND, INBOUND, INTERNAL.",
-    "network.application_protocol": "Application protocol such as HTTP, HTTPS, DNS, SMB, RDP.",
-    "network.connection.count": "Number of repeated connections, useful for beaconing or repeated access patterns.",
-
-    "network.dns.questions.name": "Queried DNS name. Useful for domain/IOC hunting and CTI.",
-    "network.dns.answers.data": "DNS answer such as resolved IPs or CNAMEs.",
-    "network.http.request.url": "Full HTTP URL if available. Useful for proxy, phishing, malware, or CTI analysis.",
-    "network.http.user_agent": "Browser/client user-agent. Useful for identity, proxy, and cloud anomaly analysis.",
-
-    "authentication.mechanism": "How authentication happened, for example MFA, password, token, SSO.",
-    "authentication.status": "Authentication outcome such as SUCCESS or FAILURE.",
-    "extensions.auth.device_trust_type": "Device trust/compliance status, useful for identity risk.",
-    "extensions.auth.conditional_access_status": "Conditional Access result, useful for Entra ID investigations.",
-    "extensions.auth.user_agent": "User-agent from authentication logs.",
-
-    "security_result.attack_details.techniques[0].id": "MITRE technique ID such as T1059.001 or T1078. Useful for alert grouping, not IOC hunting.",
-}
-
-
-def _friendly_udm_label(field_name: str) -> str:
-    return UDM_FIELD_LABELS.get(field_name, field_name)
-
-
-def _friendly_udm_help(field_name: str) -> str:
-    base_help = UDM_FIELD_HELP.get(field_name, "")
-    udm_note = f"UDM field: {field_name}"
-
-    if base_help:
-        return f"{base_help}\n\n{udm_note}"
-
-    return udm_note
-
-
-def _get_values_from_flattened(flattened: dict, field_names: list[str]) -> list[str]:
-    values = []
-
-    for field_name in field_names:
-        value = flattened.get(field_name)
-
-        if value is None:
-            continue
-
-        if isinstance(value, str) and not value.strip():
-            continue
-
-        values.append(str(value))
-
-    return list(dict.fromkeys(values))
-
-
-def _display_values(values: list[str], fallback: str = "None detected") -> str:
-    clean = [str(value) for value in values if str(value).strip()]
-    return ", ".join(clean) if clean else fallback
-
-
-def render_guided_udm_input_form():
-    """
-    Open UDM-style analyst input.
-    This is intentionally not the full UDM model, but the MVP field set
-    needed for EDR, SIEM, identity, network, cloud, email, DNS, HTTP, and auth alerts.
-    """
-    st.markdown("### Guided UDM Fields")
+def render_guided_builder():
+    st.subheader("Guided Alert Builder")
     st.caption(
-        "Fill only what you have. Empty fields are removed before analysis. "
-        "Use this for structured UDM-style alert creation."
+        "Fill analyst-friendly fields. The app converts them into UDM-style key-value pairs behind the scenes."
     )
 
-    with st.form("guided_udm_key_value_builder"):
-        field_values = {}
+    with st.form("guided_alert_builder"):
+        st.markdown("### Alert context")
 
-        st.info(
-            "You do not need to fill every field. Start with Metadata, Security Result, Principal, Target, and MITRE if available."
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            event_type = st.selectbox(
+                "Event type",
+                ["PROCESS_LAUNCH", "USER_LOGIN", "NETWORK_CONNECTION", "FILE_CREATION", "GENERIC_EVENT"],
+            )
+            vendor_name = st.text_input("Vendor", value="Microsoft")
+            product_name = st.text_input("Product", value="Defender for Endpoint")
+            severity = st.selectbox("Severity", ["LOW", "MEDIUM", "HIGH", "CRITICAL"], index=2)
+
+        with col2:
+            alert_name = st.text_input(
+                "Alert name",
+                value="Suspicious PowerShell Launched from Office",
+            )
+            rule_id = st.text_input(
+                "Rule ID",
+                value="CFC-WIN-POWERSHELL-OFFICE-001",
+            )
+            alert_title = st.text_input(
+                "Alert title",
+                value="Office spawned encoded PowerShell",
+            )
+            action = st.selectbox("Security action", ["ALLOW", "BLOCK", "DETECT", "QUARANTINE", "FAIL"], index=0)
+
+        with col3:
+            priority = st.selectbox(
+                "Priority",
+                ["LOW_PRIORITY", "MEDIUM_PRIORITY", "HIGH_PRIORITY", "CRITICAL_PRIORITY"],
+                index=2,
+            )
+            risk_score = st.number_input("Risk score", min_value=0, max_value=100, value=85)
+            alert_summary = st.text_area(
+                "Alert summary",
+                value="Microsoft Word launched PowerShell with encoded command content.",
+                height=90,
+            )
+
+        alert_description = st.text_area(
+            "Alert description",
+            value="This alert identifies suspicious process execution where an Office application starts PowerShell using encoded command-line arguments.",
+            height=100,
         )
 
-        for section_name, fields in UDM_GUIDED_FIELD_SECTIONS.items():
-            expanded = section_name in ["Metadata", "Security Result", "Principal", "Target", "MITRE"]
+        st.markdown("### MITRE context")
 
-            section_display_name = UDM_SECTION_DISPLAY_NAMES.get(section_name, section_name)
-            with st.expander(section_display_name, expanded=expanded):
-                cols = st.columns(2)
+        col4, col5, col6 = st.columns(3)
 
-                for index, field_name in enumerate(fields):
-                    widget_key = _safe_widget_key("guided_udm", field_name)
-                    placeholder = UDM_FIELD_PLACEHOLDERS.get(field_name, "")
+        with col4:
+            mitre_tactic_id = st.text_input("MITRE tactic ID", value="TA0002")
+            mitre_tactic_name = st.text_input("MITRE tactic name", value="Execution")
 
-                    with cols[index % 2]:
-                        if _is_multiline_udm_field(field_name):
-                            field_values[field_name] = st.text_area(
-                                _friendly_udm_label(field_name),
-                                value="",
-                                placeholder=placeholder,
-                                height=80,
-                                help=_friendly_udm_help(field_name),
-                                key=widget_key,
-                            )
-                        else:
-                            field_values[field_name] = st.text_input(
-                                _friendly_udm_label(field_name),
-                                value="",
-                                placeholder=placeholder,
-                                help=_friendly_udm_help(field_name),
-                                key=widget_key,
-                            )
+        with col5:
+            mitre_technique_id = st.text_input("MITRE technique ID", value="T1059")
+            mitre_technique_name = st.text_input(
+                "MITRE technique name",
+                value="Command and Scripting Interpreter",
+            )
 
-        submitted = st.form_submit_button("Build & Analyze Alert from UDM Fields")
+        with col6:
+            mitre_subtechnique_id = st.text_input("MITRE subtechnique ID", value="T1059.001")
+            mitre_subtechnique_name = st.text_input("MITRE subtechnique name", value="PowerShell")
+
+        st.markdown("### Entity and process context")
+
+        col7, col8, col9 = st.columns(3)
+
+        with col7:
+            user = st.text_input("User", value="svc_backup")
+            host = st.text_input("Host", value="WIN-SRV-22")
+            source_ip = st.text_input("Source IP", value="")
+
+        with col8:
+            process_path = st.text_input(
+                "Process path / name",
+                value="C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            )
+            process_command_line = st.text_area(
+                "Command line",
+                value="powershell.exe -enc SQBFAFgA...",
+                height=80,
+            )
+            parent_process_path = st.text_input(
+                "Parent process path / name",
+                value="C:\\Program Files\\Microsoft Office\\winword.exe",
+            )
+
+        with col9:
+            target_ip = st.text_input("Target IP", value="185.199.108.133")
+            target_hostname = st.text_input("Target hostname", value="")
+            target_url = st.text_input("Target URL", value="")
+            target_domain = st.text_input("Target domain", value="")
+
+        st.markdown("### File hash context")
+
+        col10, col11, col12 = st.columns(3)
+
+        with col10:
+            file_hash_sha256 = st.text_input("SHA256", value="")
+
+        with col11:
+            file_hash_sha1 = st.text_input("SHA1", value="")
+
+        with col12:
+            file_hash_md5 = st.text_input("MD5", value="")
+
+        submitted = st.form_submit_button("Build & Analyze UDM Alert")
 
     if submitted:
-        generated_udm = remove_empty_udm_values(field_values)
+        form_data = {
+            "event_type": event_type,
+            "vendor_name": vendor_name,
+            "product_name": product_name,
+            "alert_name": alert_name,
+            "rule_id": rule_id,
+            "alert_title": alert_title,
+            "alert_summary": alert_summary,
+            "alert_description": alert_description,
+            "severity": severity,
+            "priority": priority,
+            "risk_score": risk_score,
+            "action": action,
+            "mitre_tactic_id": mitre_tactic_id,
+            "mitre_tactic_name": mitre_tactic_name,
+            "mitre_technique_id": mitre_technique_id,
+            "mitre_technique_name": mitre_technique_name,
+            "mitre_subtechnique_id": mitre_subtechnique_id,
+            "mitre_subtechnique_name": mitre_subtechnique_name,
+            "user": user,
+            "host": host,
+            "source_ip": source_ip,
+            "process_path": process_path,
+            "process_command_line": process_command_line,
+            "parent_process_path": parent_process_path,
+            "target_ip": target_ip,
+            "target_hostname": target_hostname,
+            "target_url": target_url,
+            "target_domain": target_domain,
+            "file_hash_sha256": file_hash_sha256,
+            "file_hash_sha1": file_hash_sha1,
+            "file_hash_md5": file_hash_md5,
+        }
 
-        if not generated_udm:
-            st.error("Please fill at least one UDM field before building the alert.")
-            return
+        generated_udm = build_udm_from_guided_input(form_data)
 
-        _load_alert_into_session(
-            generated_udm,
-            "Analyst App - Guided UDM Fields",
-        )
+        st.session_state.current_alert = generated_udm
+        st.session_state.current_alert_source = "Analyst App - Guided Alert Builder"
+        st.session_state.claude_result = None
+        st.session_state.followup_result = None
+        st.session_state.cti_result = None
+        st.session_state.cti_researched = False
+        st.session_state.cti_package = None
 
-        st.success("UDM key-value alert loaded for analysis.")
+        st.success("Guided input converted into UDM-style key-value pairs. Alert loaded for analysis.")
 
-
-def render_raw_alert_json_input(key_prefix: str, source_label: str):
-    """
-    Raw alert input for full JSON testing.
-    Supports flat UDM key-value JSON and nested vendor JSON.
-    """
-    st.markdown("### Raw Alert JSON")
-    st.caption(
-        "Paste a full alert JSON here. It can be flat UDM-style key-value JSON or nested vendor JSON. "
-        "The pipeline will flatten it and extract entities."
-    )
-
-    default_json = json.dumps(sample_alert, indent=2)
-
-    raw_alert_json = st.text_area(
-        "Paste full alert JSON",
-        height=480,
-        value=default_json,
-        key=f"{key_prefix}_raw_alert_json_input",
-    )
-
-    if st.button("Analyze Raw Alert JSON", key=f"{key_prefix}_analyze_raw_alert_json"):
-        if not raw_alert_json.strip():
-            st.error("Please paste JSON first.")
-            return
-
-        try:
-            parsed_json = json.loads(raw_alert_json)
-
-        except json.JSONDecodeError as error:
-            st.error("Invalid JSON.")
-            st.code(str(error))
-            return
-
-        if not isinstance(parsed_json, dict):
-            st.error("The alert JSON must be a JSON object.")
-            return
-
-        _load_alert_into_session(
-            parsed_json,
-            source_label,
-        )
-
-        st.success("Raw alert JSON loaded for analysis.")
-
-
-def render_analyst_input_area():
-    """
-    Analyst App input area with two modes:
-    1. Guided UDM fields
-    2. Raw full alert JSON
-    """
-    st.markdown("## Input alert")
-
-    input_tabs = st.tabs(
-        [
-            "Guided UDM Fields",
-            "Raw Alert JSON",
-        ]
-    )
-
-    with input_tabs[0]:
-        render_guided_udm_input_form()
-
-    with input_tabs[1]:
-        render_raw_alert_json_input(
-            key_prefix="analyst_app",
-            source_label="Analyst App - Raw Alert JSON",
-        )
-
-
-def render_guided_builder():
-    """
-    Compatibility wrapper.
-    Older parts of the app may still call render_guided_builder().
-    """
-    render_analyst_input_area()
 
 
 def render_cti_research_result(cti_result: dict):
@@ -1689,90 +1297,6 @@ def render_followup_reassessment_result(followup_result: dict):
         st.json(followup_result)
 
 
-
-
-def render_cti_followup_testing_panel(parsed_json: dict, key_prefix: str):
-    """
-    Reusable testing panel for CTI, IOC hunts, and follow-up reassessment.
-    Used by Advanced Lab so raw JSON testing has feature parity with Analyst App.
-    """
-    st.markdown("### 🌐 AI CTI research, IOC hunts, and follow-up testing")
-    st.caption(
-        "Use this panel to test CTI and re-evaluation directly from raw Advanced Lab JSON. "
-        "CTI runs once per loaded alert and uses only safe public IOC-style values."
-    )
-
-    pipeline = build_pipeline(parsed_json)
-
-    entities = pipeline["entities"]
-    mitre_analysis = pipeline["mitre_analysis"]
-    evidence_bundle = pipeline["evidence_bundle"]
-    attack_path = pipeline["attack_path"]
-
-    cti_package = build_safe_cti_research_package(
-        flattened=pipeline["flattened"],
-        entities=entities,
-        mitre_analysis=mitre_analysis,
-        followup_evidence="",
-    )
-
-    st.session_state.cti_package = cti_package
-
-    with st.expander("Preview safe CTI research package"):
-        st.json(cti_package)
-
-    if not has_cti_researchable_indicators(cti_package):
-        st.info("No safe CTI-searchable indicators were found.")
-
-    elif st.session_state.cti_researched:
-        st.success(
-            "CTI internet research has already been run for this alert. "
-            "It will not run again unless you load a new alert."
-        )
-        render_cti_research_result(st.session_state.cti_result)
-
-    else:
-        if st.button("Run AI CTI Internet Research Once", key=f"{key_prefix}_cti_research_once"):
-            with st.spinner("AI is researching safe public indicators on the internet..."):
-                st.session_state.cti_result = ask_claude_for_cti_web_research(
-                    cti_package=cti_package,
-                    attack_path=attack_path,
-                )
-                st.session_state.cti_researched = True
-
-        render_cti_research_result(st.session_state.cti_result)
-
-    st.markdown("### 🎯 IOC hunts from CTI")
-    render_cti_informed_hunts(st.session_state.cti_result)
-
-    st.markdown("### 🔁 Follow-up evidence re-evaluation")
-
-    followup_evidence = st.text_area(
-        "Paste hunt results / investigation notes",
-        height=240,
-        placeholder=(
-            "Paste hits from alert validation hunts or IOC hunts here.\\n"
-            "Examples:\\n"
-            "- Same host had certutil download after PowerShell\\n"
-            "- IOC domain seen on 3 hosts\\n"
-            "- No persistence, discovery, or credential access found\\n"
-        ),
-        key=f"{key_prefix}_followup_evidence",
-    )
-
-    if st.button("Re-evaluate with Follow-up Evidence", key=f"{key_prefix}_followup_reassess"):
-        with st.spinner("AI is re-evaluating the case using the follow-up evidence..."):
-            st.session_state.followup_result = ask_claude_for_followup_reassessment(
-                evidence_bundle=evidence_bundle,
-                attack_path=attack_path,
-                original_claude_result=st.session_state.claude_result or {},
-                followup_evidence=followup_evidence,
-                cti_result=st.session_state.cti_result or {},
-            )
-
-    render_followup_reassessment_result(st.session_state.followup_result)
-
-
 def render_analyst_app():
     """
     Clean user-facing app mode.
@@ -1783,7 +1307,7 @@ def render_analyst_app():
         "Fill in the key alert details. The app converts them into a normalized UDM-style evidence model behind the scenes."
     )
 
-    render_analyst_input_area()
+    render_guided_builder()
 
     if st.session_state.current_alert is None:
         st.info("Build an alert using the guided form above to start the analyst workflow.")
@@ -1832,92 +1356,25 @@ def render_analyst_app():
 
     entity_col1, entity_col2, entity_col3 = st.columns(3)
 
-    source_users = _get_values_from_flattened(
-        flattened,
-        [
-            "principal.user.userid",
-            "principal.user.email_addresses[0]",
-            "target.user.userid",
-        ],
-    ) or entities.get("users", [])
-
-    source_hosts = _get_values_from_flattened(
-        flattened,
-        [
-            "principal.hostname",
-            "principal.asset.hostname",
-            "src.hostname",
-            "source.hostname",
-        ],
-    ) or entities.get("hosts", [])
-
-    source_ips = _get_values_from_flattened(
-        flattened,
-        [
-            "principal.ip",
-            "principal.asset.ip",
-            "src.ip",
-            "source.ip",
-        ],
-    )
-
-    destination_ips = _get_values_from_flattened(
-        flattened,
-        [
-            "target.ip",
-            "destination.ip",
-            "dest.ip",
-        ],
-    )
-
-    destination_domains = _get_values_from_flattened(
-        flattened,
-        [
-            "target.domain.name",
-            "network.dns.questions.name",
-            "network.email.sender_domain",
-        ],
-    )
-
-    destination_urls = _get_values_from_flattened(
-        flattened,
-        [
-            "target.url",
-            "network.http.request.url",
-        ],
-    )
-
-    target_applications = _get_values_from_flattened(
-        flattened,
-        [
-            "target.application",
-            "target.resource.name",
-            "target.resource.type",
-        ],
-    )
-
     with entity_col1:
-        st.markdown("#### 👤 Source / acting entity")
+        st.markdown("#### 👤 User / host")
         st.markdown(
             f"""
             <div class="compact-info">
-            <b>Users:</b> {escape(_display_values(source_users))}<br>
-            <b>Hosts:</b> {escape(_display_values(source_hosts))}<br>
-            <b>Source IPs:</b> {escape(_display_values(source_ips))}
+            <b>Users:</b> {escape(", ".join(entities.get("users", [])) or "None detected")}<br>
+            <b>Hosts:</b> {escape(", ".join(entities.get("hosts", [])) or "None detected")}
             </div>
             """,
             unsafe_allow_html=True,
         )
 
     with entity_col2:
-        st.markdown("#### 🌐 Destination / target")
+        st.markdown("#### 🌐 Network")
         st.markdown(
             f"""
             <div class="compact-info">
-            <b>Destination IPs:</b> {escape(_display_values(destination_ips))}<br>
-            <b>Domains:</b> {escape(_display_values(destination_domains))}<br>
-            <b>URLs:</b> {escape(_display_values(destination_urls))}<br>
-            <b>Applications/resources:</b> {escape(_display_values(target_applications))}
+            <b>IPs:</b> {escape(", ".join(entities.get("ips", [])) or "None detected")}<br>
+            <b>URLs:</b> {escape(", ".join(entities.get("urls", [])) or "None detected")}
             </div>
             """,
             unsafe_allow_html=True,
@@ -2120,9 +1577,6 @@ with main_tab_lab:
         st.divider()
         st.caption(f"Current alert source: {st.session_state.current_alert_source}")
         render_analysis(st.session_state.current_alert)
-
-        st.divider()
-        render_cti_followup_testing_panel(st.session_state.current_alert, key_prefix="advanced_lab")
     else:
         st.info("Paste a UDM alert above and click Analyze to start advanced analysis.")
 

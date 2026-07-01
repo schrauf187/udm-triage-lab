@@ -466,7 +466,6 @@ def render_analysis(parsed_json: dict):
     pipeline = build_pipeline(parsed_json)
 
     entities = pipeline["entities"]
-    flattened = pipeline["flattened"]
     enriched_table = pipeline["enriched_table"]
     semantic_facts = pipeline["semantic_facts"]
     mitre_analysis = pipeline["mitre_analysis"]
@@ -874,207 +873,6 @@ UDM_FIELD_PLACEHOLDERS = {
 }
 
 
-
-UDM_SECTION_DISPLAY_NAMES = {
-    "Metadata": "Alert / Incident Metadata",
-    "Principal": "Source / Acting Entity",
-    "Target": "Destination / Affected Entity",
-    "Security Result": "Detection / Security Result",
-    "Network": "Network Session",
-    "Process": "Process Evidence",
-    "File": "File Evidence",
-    "DNS": "DNS Evidence",
-    "HTTP": "HTTP Evidence",
-    "Authentication": "Authentication Context",
-    "MITRE": "MITRE ATT&CK Context",
-}
-
-
-UDM_FIELD_LABELS = {
-    "metadata.event_type": "Event type",
-    "metadata.vendor_name": "Vendor",
-    "metadata.product_name": "Product",
-    "metadata.product_event_type": "Vendor event type",
-    "metadata.event_timestamp": "Event timestamp",
-    "metadata.ingested_timestamp": "Ingested timestamp",
-    "metadata.description": "Metadata description",
-    "metadata.log_type": "Log type",
-
-    "principal.ip": "Source / acting IP",
-    "principal.hostname": "Source hostname",
-    "principal.asset.hostname": "Source asset hostname",
-    "principal.asset.asset_id": "Source asset ID",
-    "principal.user.userid": "Acting user ID",
-    "principal.user.email_addresses[0]": "Acting user email",
-    "principal.process.command_line": "Source process command line",
-    "principal.process.pid": "Source process PID",
-    "principal.process.file.full_path": "Source process full path",
-    "principal.process.file.name": "Source process name",
-    "principal.process.parent_process.file.full_path": "Parent process full path",
-    "principal.process.parent_process.file.name": "Parent process name",
-
-    "target.ip": "Destination / target IP",
-    "target.hostname": "Destination hostname",
-    "target.user.userid": "Target user ID",
-    "target.file.full_path": "Target file full path",
-    "target.file.name": "Target file name",
-    "target.file.sha256": "Target file SHA256",
-    "target.process.command_line": "Target process command line",
-    "target.domain.name": "Destination domain",
-    "target.url": "Destination URL",
-    "target.port": "Destination port",
-    "target.application": "Target application",
-
-    "security_result.action": "Detection action",
-    "security_result.severity": "Severity",
-    "security_result.priority": "Priority",
-    "security_result.risk_score": "Risk score",
-    "security_result.summary": "Alert summary",
-    "security_result.category": "Detection category",
-    "security_result.description": "Alert description",
-    "security_result.rule_name": "Rule name",
-    "security_result.rule_id": "Rule ID",
-    "security_result.display_name": "Display name",
-    "security_result.detection_fields": "Detection fields / matched evidence",
-
-    "network.application_protocol": "Application protocol",
-    "network.ip_protocol": "IP protocol",
-    "network.direction": "Direction",
-    "network.session_id": "Session ID",
-    "network.sent_bytes": "Sent bytes",
-    "network.received_bytes": "Received bytes",
-    "network.src_port": "Source port",
-    "network.dst_port": "Destination port",
-    "network.connection.count": "Connection count",
-
-    "process.pid": "Process PID",
-    "process.parent_pid": "Parent PID",
-    "process.command_line": "Observed process command line",
-    "process.file.full_path": "Observed process full path",
-    "process.file.name": "Observed process name",
-    "process.file.sha256": "Observed process SHA256",
-
-    "file.full_path": "File full path",
-    "file.sha256": "File SHA256",
-    "file.md5": "File MD5",
-    "file.file_name": "File name",
-    "file.size": "File size",
-
-    "network.dns.questions.name": "DNS query name",
-    "network.dns.answers.data": "DNS answer data",
-
-    "network.http.method": "HTTP method",
-    "network.http.request.url": "HTTP request URL",
-    "network.http.response.code": "HTTP response code",
-    "network.http.user_agent": "HTTP user agent",
-
-    "authentication.auth_type": "Authentication type",
-    "authentication.mechanism": "Authentication mechanism",
-    "authentication.status": "Authentication status",
-    "extensions.auth.mechanism": "Auth mechanism",
-    "extensions.auth.result": "Auth result",
-    "extensions.auth.device_trust_type": "Device trust type",
-    "extensions.auth.conditional_access_status": "Conditional access status",
-    "extensions.auth.user_agent": "Auth user agent",
-
-    "security_result.attack_details.tactics[0].id": "MITRE tactic 1 ID",
-    "security_result.attack_details.tactics[0].name": "MITRE tactic 1 name",
-    "security_result.attack_details.tactics[1].id": "MITRE tactic 2 ID",
-    "security_result.attack_details.tactics[1].name": "MITRE tactic 2 name",
-    "security_result.attack_details.tactics[2].id": "MITRE tactic 3 ID",
-    "security_result.attack_details.tactics[2].name": "MITRE tactic 3 name",
-    "security_result.attack_details.techniques[0].id": "MITRE technique 1 ID",
-    "security_result.attack_details.techniques[0].name": "MITRE technique 1 name",
-    "security_result.attack_details.techniques[1].id": "MITRE technique 2 ID",
-    "security_result.attack_details.techniques[1].name": "MITRE technique 2 name",
-    "security_result.attack_details.techniques[2].id": "MITRE technique 3 ID",
-    "security_result.attack_details.techniques[2].name": "MITRE technique 3 name",
-    "security_result.attack_details.techniques[3].id": "MITRE technique 4 ID",
-    "security_result.attack_details.techniques[3].name": "MITRE technique 4 name",
-}
-
-
-UDM_FIELD_HELP = {
-    "metadata.event_type": "High-level event type, for example PROCESS_LAUNCH, USER_LOGIN, NETWORK_CONNECTION, EMAIL_TRANSACTION, USER_RESOURCE_ACCESS.",
-    "metadata.product_event_type": "Original event type from the vendor product, if available.",
-    "metadata.log_type": "Useful for identifying the data source, for example EDR_DETECTION, AAD_SIGNIN, WEB_PROXY, AZURE_ACTIVITY.",
-    "metadata.event_timestamp": "When the security event happened.",
-    "metadata.ingested_timestamp": "When the event arrived in the SIEM/data platform.",
-
-    "principal.ip": "The source or acting IP. For identity alerts this is often the sign-in IP. For network alerts this is the client/source IP.",
-    "principal.asset.hostname": "The source/acting host, device, or workload that generated the activity.",
-    "principal.user.userid": "The acting user or service account.",
-    "principal.user.email_addresses[0]": "Email address of the acting user. Useful for identity and email investigations.",
-    "principal.process.command_line": "Command line of the source/acting process. Sensitive: this is not sent raw to CTI research.",
-    "principal.process.file.full_path": "Full path of the source/acting process, for example powershell.exe path. Sensitive: not sent to CTI research.",
-
-    "target.ip": "The destination, target, or second IP. For impossible travel this may represent the second sign-in IP. For network alerts this is the remote IP.",
-    "target.hostname": "Destination or affected host name.",
-    "target.domain.name": "Destination domain. This can be used for CTI if it is public and not customer-sensitive.",
-    "target.url": "Destination URL. This can be used for CTI if it is public and not customer-sensitive.",
-    "target.application": "Application or cloud service accessed, for example Microsoft Azure Portal.",
-    "target.file.sha256": "SHA256 of the target/downloaded file. Good CTI indicator if public and non-sensitive.",
-
-    "security_result.action": "What the security product did, for example ALLOW, BLOCK, DETECT, QUARANTINE.",
-    "security_result.category": "Detection category, for example malware, identity, suspicious_login, cloud_control_plane.",
-    "security_result.detection_fields": "Any matched fields or evidence returned by the detection rule.",
-    "security_result.risk_score": "Numeric score if the product provides one.",
-
-    "network.direction": "Traffic direction, for example OUTBOUND, INBOUND, INTERNAL.",
-    "network.application_protocol": "Application protocol such as HTTP, HTTPS, DNS, SMB, RDP.",
-    "network.connection.count": "Number of repeated connections, useful for beaconing or repeated access patterns.",
-
-    "network.dns.questions.name": "Queried DNS name. Useful for domain/IOC hunting and CTI.",
-    "network.dns.answers.data": "DNS answer such as resolved IPs or CNAMEs.",
-    "network.http.request.url": "Full HTTP URL if available. Useful for proxy, phishing, malware, or CTI analysis.",
-    "network.http.user_agent": "Browser/client user-agent. Useful for identity, proxy, and cloud anomaly analysis.",
-
-    "authentication.mechanism": "How authentication happened, for example MFA, password, token, SSO.",
-    "authentication.status": "Authentication outcome such as SUCCESS or FAILURE.",
-    "extensions.auth.device_trust_type": "Device trust/compliance status, useful for identity risk.",
-    "extensions.auth.conditional_access_status": "Conditional Access result, useful for Entra ID investigations.",
-    "extensions.auth.user_agent": "User-agent from authentication logs.",
-
-    "security_result.attack_details.techniques[0].id": "MITRE technique ID such as T1059.001 or T1078. Useful for alert grouping, not IOC hunting.",
-}
-
-
-def _friendly_udm_label(field_name: str) -> str:
-    return UDM_FIELD_LABELS.get(field_name, field_name)
-
-
-def _friendly_udm_help(field_name: str) -> str:
-    base_help = UDM_FIELD_HELP.get(field_name, "")
-    udm_note = f"UDM field: {field_name}"
-
-    if base_help:
-        return f"{base_help}\n\n{udm_note}"
-
-    return udm_note
-
-
-def _get_values_from_flattened(flattened: dict, field_names: list[str]) -> list[str]:
-    values = []
-
-    for field_name in field_names:
-        value = flattened.get(field_name)
-
-        if value is None:
-            continue
-
-        if isinstance(value, str) and not value.strip():
-            continue
-
-        values.append(str(value))
-
-    return list(dict.fromkeys(values))
-
-
-def _display_values(values: list[str], fallback: str = "None detected") -> str:
-    clean = [str(value) for value in values if str(value).strip()]
-    return ", ".join(clean) if clean else fallback
-
-
 def render_guided_udm_input_form():
     """
     Open UDM-style analyst input.
@@ -1097,8 +895,7 @@ def render_guided_udm_input_form():
         for section_name, fields in UDM_GUIDED_FIELD_SECTIONS.items():
             expanded = section_name in ["Metadata", "Security Result", "Principal", "Target", "MITRE"]
 
-            section_display_name = UDM_SECTION_DISPLAY_NAMES.get(section_name, section_name)
-            with st.expander(section_display_name, expanded=expanded):
+            with st.expander(section_name, expanded=expanded):
                 cols = st.columns(2)
 
                 for index, field_name in enumerate(fields):
@@ -1108,19 +905,17 @@ def render_guided_udm_input_form():
                     with cols[index % 2]:
                         if _is_multiline_udm_field(field_name):
                             field_values[field_name] = st.text_area(
-                                _friendly_udm_label(field_name),
+                                field_name,
                                 value="",
                                 placeholder=placeholder,
                                 height=80,
-                                help=_friendly_udm_help(field_name),
                                 key=widget_key,
                             )
                         else:
                             field_values[field_name] = st.text_input(
-                                _friendly_udm_label(field_name),
+                                field_name,
                                 value="",
                                 placeholder=placeholder,
-                                help=_friendly_udm_help(field_name),
                                 key=widget_key,
                             )
 
@@ -1832,92 +1627,25 @@ def render_analyst_app():
 
     entity_col1, entity_col2, entity_col3 = st.columns(3)
 
-    source_users = _get_values_from_flattened(
-        flattened,
-        [
-            "principal.user.userid",
-            "principal.user.email_addresses[0]",
-            "target.user.userid",
-        ],
-    ) or entities.get("users", [])
-
-    source_hosts = _get_values_from_flattened(
-        flattened,
-        [
-            "principal.hostname",
-            "principal.asset.hostname",
-            "src.hostname",
-            "source.hostname",
-        ],
-    ) or entities.get("hosts", [])
-
-    source_ips = _get_values_from_flattened(
-        flattened,
-        [
-            "principal.ip",
-            "principal.asset.ip",
-            "src.ip",
-            "source.ip",
-        ],
-    )
-
-    destination_ips = _get_values_from_flattened(
-        flattened,
-        [
-            "target.ip",
-            "destination.ip",
-            "dest.ip",
-        ],
-    )
-
-    destination_domains = _get_values_from_flattened(
-        flattened,
-        [
-            "target.domain.name",
-            "network.dns.questions.name",
-            "network.email.sender_domain",
-        ],
-    )
-
-    destination_urls = _get_values_from_flattened(
-        flattened,
-        [
-            "target.url",
-            "network.http.request.url",
-        ],
-    )
-
-    target_applications = _get_values_from_flattened(
-        flattened,
-        [
-            "target.application",
-            "target.resource.name",
-            "target.resource.type",
-        ],
-    )
-
     with entity_col1:
-        st.markdown("#### 👤 Source / acting entity")
+        st.markdown("#### 👤 User / host")
         st.markdown(
             f"""
             <div class="compact-info">
-            <b>Users:</b> {escape(_display_values(source_users))}<br>
-            <b>Hosts:</b> {escape(_display_values(source_hosts))}<br>
-            <b>Source IPs:</b> {escape(_display_values(source_ips))}
+            <b>Users:</b> {escape(", ".join(entities.get("users", [])) or "None detected")}<br>
+            <b>Hosts:</b> {escape(", ".join(entities.get("hosts", [])) or "None detected")}
             </div>
             """,
             unsafe_allow_html=True,
         )
 
     with entity_col2:
-        st.markdown("#### 🌐 Destination / target")
+        st.markdown("#### 🌐 Network")
         st.markdown(
             f"""
             <div class="compact-info">
-            <b>Destination IPs:</b> {escape(_display_values(destination_ips))}<br>
-            <b>Domains:</b> {escape(_display_values(destination_domains))}<br>
-            <b>URLs:</b> {escape(_display_values(destination_urls))}<br>
-            <b>Applications/resources:</b> {escape(_display_values(target_applications))}
+            <b>IPs:</b> {escape(", ".join(entities.get("ips", [])) or "None detected")}<br>
+            <b>URLs:</b> {escape(", ".join(entities.get("urls", [])) or "None detected")}
             </div>
             """,
             unsafe_allow_html=True,

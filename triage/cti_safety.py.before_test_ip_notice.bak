@@ -226,7 +226,6 @@ def build_safe_cti_research_package(
             "Local file paths are not sent to CTI research.",
             "Process full paths are not sent to CTI research.",
             "Internal/private IP addresses are not sent to CTI research.",
-            "Reserved/documentation IP ranges such as 203.0.113.0/24 and 198.51.100.0/24 are not sent to CTI research.",
             "Raw command lines are not sent; only sanitized behavioral patterns are used.",
         ],
     }
@@ -320,7 +319,6 @@ def build_safe_cti_research_package(
             "Local file paths are not sent to CTI research.",
             "Process full paths are not sent to CTI research.",
             "Internal/private IP addresses are not sent to CTI research.",
-            "Reserved/documentation IP ranges such as 203.0.113.0/24 and 198.51.100.0/24 are not sent to CTI research.",
             "Raw command lines are not sent; only sanitized behavioral patterns are used.",
             "UDM field names are not sent as domains.",
         ],
@@ -391,7 +389,6 @@ def build_safe_cti_research_package(
             "Local file paths are not sent to CTI research.",
             "Process full paths are not sent to CTI research.",
             "Internal/private IP addresses are not sent to CTI research.",
-            "Reserved/documentation IP ranges such as 203.0.113.0/24 and 198.51.100.0/24 are not sent to CTI research.",
             "Raw command lines are not sent; only sanitized behavioral patterns are used.",
             "UDM field names are not sent as domains.",
             "MITRE TTPs are not sent to CTI/IOC research; they remain in alert-centric hunts only.",
