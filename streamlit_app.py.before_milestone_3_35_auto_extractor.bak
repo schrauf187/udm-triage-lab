@@ -2,9 +2,6 @@ import json
 import streamlit as st
 from html import escape
 
-from triage.raw_extractor import parse_raw_alert_to_field_inventory
-from triage.ai_udm_mapper import ask_ai_for_udm_mapping_suggestions
-
 from triage.cti_safety import (
     build_safe_cti_research_package,
     has_cti_researchable_indicators,
@@ -62,18 +59,6 @@ if "cti_researched" not in st.session_state:
 
 if "cti_package" not in st.session_state:
     st.session_state.cti_package = None
-
-if "auto_extractor_raw_content" not in st.session_state:
-    st.session_state.auto_extractor_raw_content = ""
-
-if "auto_extractor_parsed" not in st.session_state:
-    st.session_state.auto_extractor_parsed = None
-
-if "auto_extractor_ai_mapping" not in st.session_state:
-    st.session_state.auto_extractor_ai_mapping = None
-
-if "auto_extractor_audit" not in st.session_state:
-    st.session_state.auto_extractor_audit = []
 
 sample_alert = {
     "metadata.event_type": "PROCESS_LAUNCH",
@@ -1201,293 +1186,11 @@ def render_raw_alert_json_input(key_prefix: str, source_label: str):
         st.success("Raw alert JSON loaded for analysis.")
 
 
-
-def _mapping_default_decision(suggestion: dict) -> str:
-    confidence = suggestion.get("confidence", 0)
-
-    try:
-        confidence = float(confidence)
-    except Exception:
-        confidence = 0
-
-    if suggestion.get("mapping_type") == "preserve_vendor_field":
-        return "Accept"
-
-    if confidence >= 0.75:
-        return "Accept"
-
-    return "Edit"
-
-
-def _get_raw_value_for_suggestion(raw_fields: dict, suggestion: dict):
-    source_field = suggestion.get("source_field", "")
-    suggested_value = suggestion.get("suggested_value", "")
-
-    if source_field in raw_fields:
-        return raw_fields[source_field]
-
-    if suggested_value not in [None, ""]:
-        return suggested_value
-
-    return suggestion.get("source_value_preview", "")
-
-
-def render_auto_alert_extractor_input():
-    """
-    AI-assisted raw alert extraction and UDM mapping workbench.
-
-    Demo/NFR mode:
-    The analyst explicitly confirms that pasted alert content may be sent to the AI model.
-    No internet CTI research happens in this stage.
-    """
-    st.markdown("### Auto Alert Extractor")
-    st.caption(
-        "Paste raw alert text, JSON, key-value data, or a vendor export. "
-        "The app extracts fields and asks the AI to recommend UDM mappings. "
-        "The analyst must approve mappings before the final evidence bundle is created."
-    )
-
-    st.warning(
-        "Auto Alert Extractor may send the pasted alert content to the configured AI model for UDM mapping assistance. "
-        "This does not perform internet CTI research. Use demo/NFR/synthetic data unless your environment and approvals allow real alert data."
-    )
-
-    raw_content = st.text_area(
-        "Paste raw alert data",
-        height=420,
-        value=st.session_state.auto_extractor_raw_content,
-        placeholder=(
-            "Paste CrowdStrike, Sentinel, Defender, Splunk, Palo Alto, proxy, DNS, email, cloud, or identity alert data here.\n\n"
-            "Supported examples:\n"
-            "- Raw JSON\n"
-            "- Key-value alert dump\n"
-            "- Vendor detection text\n"
-            "- SIEM alert export"
-        ),
-        key="auto_extractor_raw_text_input",
-    )
-
-    st.session_state.auto_extractor_raw_content = raw_content
-
-    col_extract, col_ai = st.columns(2)
-
-    with col_extract:
-        if st.button("1. Extract fields locally", key="auto_extractor_extract_fields"):
-            parsed = parse_raw_alert_to_field_inventory(raw_content)
-            st.session_state.auto_extractor_parsed = parsed
-            st.session_state.auto_extractor_ai_mapping = None
-
-    parsed = st.session_state.auto_extractor_parsed
-
-    if parsed:
-        st.success(
-            f"Extracted {parsed.get('field_count', 0)} fields from {parsed.get('input_type', 'unknown')} input."
-        )
-
-        with st.expander("Extracted field inventory", expanded=True):
-            st.dataframe(
-                parsed.get("inventory", []),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        with st.expander("Raw extracted key-value fields"):
-            st.json(parsed.get("raw_fields", {}))
-
-    analyst_ack = st.checkbox(
-        "I understand this demo/NFR alert content may be sent to the AI model for UDM mapping assistance.",
-        key="auto_extractor_ai_ack",
-    )
-
-    with col_ai:
-        if st.button("2. Generate AI UDM mapping suggestions", key="auto_extractor_generate_ai_mapping"):
-            if not parsed:
-                st.error("Extract fields locally first.")
-            elif not analyst_ack:
-                st.error("Please confirm the AI mapping notice before generating suggestions.")
-            else:
-                with st.spinner("AI is analyzing the extracted fields and recommending UDM mappings..."):
-                    st.session_state.auto_extractor_ai_mapping = ask_ai_for_udm_mapping_suggestions(
-                        raw_alert_content=raw_content,
-                        field_inventory=parsed.get("inventory", []),
-                    )
-
-    ai_mapping = st.session_state.auto_extractor_ai_mapping
-
-    if not ai_mapping:
-        return
-
-    if "error" in ai_mapping:
-        st.error(ai_mapping["error"])
-
-        if "raw_response" in ai_mapping:
-            st.code(ai_mapping["raw_response"])
-
-        return
-
-    st.markdown("### AI mapping suggestions")
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.info(f"Alert type guess: {ai_mapping.get('alert_type_guess', 'unknown')}")
-
-    with col_b:
-        st.info(f"Vendor/product guess: {ai_mapping.get('vendor_guess', 'unknown')}")
-
-    notes = ai_mapping.get("normalization_notes", [])
-    if notes:
-        with st.expander("Normalization notes"):
-            render_compact_bullets(notes, icon="📝", empty_message="No notes returned.")
-
-    suggestions = ai_mapping.get("mapping_suggestions", [])
-
-    if not suggestions:
-        st.warning("No mapping suggestions returned.")
-        return
-
-    raw_fields = parsed.get("raw_fields", {})
-
-    st.caption(
-        "Review each suggestion. Accept, edit, or reject it. "
-        "Only accepted or edited mappings are used to build the final UDM evidence bundle."
-    )
-
-    with st.form("auto_extractor_mapping_validation_form"):
-        validated_rows = []
-
-        for index, suggestion in enumerate(suggestions):
-            source_field = suggestion.get("source_field", f"unknown_{index}")
-            suggested_udm = suggestion.get("suggested_udm_field", "")
-            confidence = suggestion.get("confidence", "unknown")
-            reason = suggestion.get("reason", "")
-            relevance = suggestion.get("security_relevance", "unknown")
-            mapping_type = suggestion.get("mapping_type", "unknown")
-            source_preview = suggestion.get("source_value_preview", "")
-
-            with st.expander(
-                f"{index + 1}. {source_field} → {suggested_udm} | confidence {confidence}",
-                expanded=index < 8,
-            ):
-                st.markdown(
-                    f"""
-                    <div class="compact-info">
-                    <b>Source field:</b> {escape(str(source_field))}<br>
-                    <b>Value preview:</b> {escape(str(source_preview))}<br>
-                    <b>Mapping type:</b> {escape(str(mapping_type))}<br>
-                    <b>Security relevance:</b> {escape(str(relevance))}<br>
-                    <b>Reason:</b> {escape(str(reason))}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                decision = st.selectbox(
-                    "Decision",
-                    ["Accept", "Edit", "Reject"],
-                    index=["Accept", "Edit", "Reject"].index(_mapping_default_decision(suggestion)),
-                    key=f"auto_map_decision_{index}",
-                )
-
-                edited_udm_field = st.text_input(
-                    "UDM field",
-                    value=suggested_udm,
-                    key=f"auto_map_udm_field_{index}",
-                )
-
-                value_to_use = _get_raw_value_for_suggestion(raw_fields, suggestion)
-
-                edited_value = st.text_area(
-                    "Value to use",
-                    value=str(value_to_use),
-                    height=90,
-                    key=f"auto_map_value_{index}",
-                )
-
-                validated_rows.append(
-                    {
-                        "decision": decision,
-                        "source_field": source_field,
-                        "udm_field": edited_udm_field.strip(),
-                        "value": edited_value,
-                        "original_suggestion": suggestion,
-                    }
-                )
-
-        build_bundle = st.form_submit_button("Build Final UDM Evidence Bundle from Approved Mappings")
-
-    if build_bundle:
-        final_udm = {}
-        audit_rows = []
-
-        for row in validated_rows:
-            decision = row["decision"]
-
-            if decision == "Reject":
-                audit_rows.append(
-                    {
-                        "decision": "Reject",
-                        "source_field": row["source_field"],
-                        "suggested_udm_field": row["original_suggestion"].get("suggested_udm_field", ""),
-                        "approved_udm_field": "",
-                    }
-                )
-                continue
-
-            udm_field = row["udm_field"]
-            value = row["value"]
-
-            if not udm_field or value in [None, ""]:
-                continue
-
-            final_udm[udm_field] = value
-
-            audit_rows.append(
-                {
-                    "decision": decision,
-                    "source_field": row["source_field"],
-                    "suggested_udm_field": row["original_suggestion"].get("suggested_udm_field", ""),
-                    "approved_udm_field": udm_field,
-                    "confidence": row["original_suggestion"].get("confidence", ""),
-                    "reason": row["original_suggestion"].get("reason", ""),
-                }
-            )
-
-        if not final_udm:
-            st.error("No approved mappings produced a final UDM bundle.")
-            return
-
-        st.session_state.auto_extractor_audit = audit_rows
-
-        _load_alert_into_session(
-            final_udm,
-            "Analyst App - Auto Alert Extractor validated mapping",
-        )
-
-        st.success("Final UDM evidence bundle created and loaded for analysis.")
-
-        with st.expander("Final UDM evidence bundle", expanded=True):
-            st.json(final_udm)
-
-        with st.expander("Mapping audit trail"):
-            st.json(audit_rows)
-
-    unmapped = ai_mapping.get("unmapped_fields", [])
-    if unmapped:
-        with st.expander("Unmapped fields"):
-            st.dataframe(
-                unmapped,
-                use_container_width=True,
-                hide_index=True,
-            )
-
-
 def render_analyst_input_area():
     """
-    Analyst App input area with three modes:
+    Analyst App input area with two modes:
     1. Guided UDM fields
     2. Raw full alert JSON
-    3. Auto Alert Extractor / AI-assisted UDM mapping
     """
     st.markdown("## Input alert")
 
@@ -1495,7 +1198,6 @@ def render_analyst_input_area():
         [
             "Guided UDM Fields",
             "Raw Alert JSON",
-            "Auto Alert Extractor",
         ]
     )
 
@@ -1507,9 +1209,6 @@ def render_analyst_input_area():
             key_prefix="analyst_app",
             source_label="Analyst App - Raw Alert JSON",
         )
-
-    with input_tabs[2]:
-        render_auto_alert_extractor_input()
 
 
 def render_guided_builder():
