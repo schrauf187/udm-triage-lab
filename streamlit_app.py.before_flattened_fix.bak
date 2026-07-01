@@ -1792,7 +1792,6 @@ def render_analyst_app():
     st.divider()
 
     pipeline = build_pipeline(st.session_state.current_alert)
-    flattened = pipeline["flattened"]
 
     mitre_analysis = pipeline["mitre_analysis"]
     semantic_facts = pipeline["semantic_facts"]
