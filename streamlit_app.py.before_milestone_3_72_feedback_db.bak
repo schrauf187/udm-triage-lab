@@ -4,13 +4,6 @@ from html import escape
 
 from triage.raw_extractor import parse_raw_alert_to_field_inventory
 from triage.ai_udm_mapper import ask_ai_for_udm_mapping_suggestions
-from triage.feedback_db import (
-    get_feedback_stats,
-    init_feedback_db,
-    list_mapping_decisions,
-    list_recent_feedback,
-    save_feedback_submission,
-)
 
 from triage.cti_safety import (
     build_safe_cti_research_package,
@@ -87,9 +80,6 @@ if "feedback_submissions" not in st.session_state:
 
 if "last_feedback_submission" not in st.session_state:
     st.session_state.last_feedback_submission = None
-
-if "last_feedback_db_result" not in st.session_state:
-    st.session_state.last_feedback_db_result = None
 
 sample_alert = {
     "metadata.event_type": "PROCESS_LAUNCH",
@@ -2157,62 +2147,6 @@ def _feedback_default_ttp_string(pipeline: dict) -> str:
     return ", ".join(techniques)
 
 
-
-def render_feedback_database_status():
-    """
-    Milestone 3.72:
-    Small SQLite feedback database status and review panel.
-    """
-    with st.expander("Feedback database status", expanded=False):
-        try:
-            db_path = init_feedback_db()
-            stats = get_feedback_stats()
-
-            st.success(f"Feedback database ready: {db_path}")
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                st.metric("Feedback submissions", stats.get("total_feedback_submissions", 0))
-
-            with c2:
-                st.metric("Alert sessions", stats.get("total_alert_sessions", 0))
-
-            with c3:
-                st.metric("Mapping decisions", stats.get("total_mapping_decisions", 0))
-
-            st.markdown("#### Verdict counts")
-            st.dataframe(
-                stats.get("verdict_counts", []),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            st.markdown("#### Helpfulness counts")
-            st.dataframe(
-                stats.get("helpfulness_counts", []),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            st.markdown("#### Recent feedback")
-            st.dataframe(
-                list_recent_feedback(limit=10),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            st.markdown("#### Recent mapping decisions")
-            st.dataframe(
-                list_mapping_decisions(limit=20),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        except Exception as error:
-            st.error(f"Feedback database error: {type(error).__name__}: {error}")
-
-
 def render_feedback_learning_interface(current_alert: dict, pipeline: dict, context_label: str = "Analyst App"):
     """
     Milestone 3.71:
@@ -2398,31 +2332,11 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
         st.session_state.feedback_submissions.append(feedback_record)
         st.session_state.last_feedback_submission = feedback_record
 
-        try:
-            db_result = save_feedback_submission(feedback_record)
-            st.session_state.last_feedback_db_result = db_result
-
-            st.success(
-                "Feedback captured and saved to SQLite database. "
-                f"Mapping decisions saved: {db_result.get('mapping_decisions_saved', 0)}"
-            )
-
-        except Exception as error:
-            st.session_state.last_feedback_db_result = None
-            st.warning(
-                "Feedback captured in the current session, but database save failed: "
-                f"{type(error).__name__}: {error}"
-            )
+        st.success("Feedback captured in session. Database persistence comes in Milestone 3.72.")
 
     if st.session_state.get("last_feedback_submission"):
         with st.expander("Latest feedback submission", expanded=False):
             st.json(st.session_state.last_feedback_submission)
-
-    if st.session_state.get("last_feedback_db_result"):
-        with st.expander("Latest database save result", expanded=False):
-            st.json(st.session_state.last_feedback_db_result)
-
-    render_feedback_database_status()
 
     if st.session_state.get("feedback_submissions"):
         total_feedback = len(st.session_state.feedback_submissions)
