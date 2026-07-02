@@ -309,7 +309,7 @@ def render_simple_claude_result(claude_result: dict):
     Shows all content, but with smaller typography and tighter layout.
     """
     if not claude_result:
-        st.info("Generate an AI triage explanation to see the analyst summary.")
+        st.info("Generate AI triage assistance to receive an investigation assessment, suspicious and benign context, missing evidence, and recommended next steps.")
         return
 
     if "error" in claude_result:
@@ -2534,41 +2534,53 @@ def render_public_guide_and_privacy():
 
     st.markdown(
         """
-        **1. Paste your alert into Auto Alert Extractor**
+        **1. Input alert**
 
-        Use demo, lab, NFR, synthetic, or approved alert data. The tool can handle raw text, JSON, key-value dumps, and vendor alert exports.
+        Start in the Analyst Workbench. For the fastest demo, open **Raw Alert JSON** and click **Analyze** on the preloaded demo alert.  
+        You can also use **Auto Alert Extractor** for messy raw alerts, or **Guided UDM Fields** when you want tighter control over what data is included.
 
-        **2. Extract fields locally**
+        **Privacy-conscious alternative**
 
-        The app extracts visible fields and creates a key-value inventory.
+        If you are unsure whether the raw alert may be submitted to the configured AI API, use the local extraction step only. Review the extracted fields, then manually copy only the fields you are allowed to process into the Guided UDM Fields tab. This gives you full control over which usernames, hostnames, IPs, URLs, file paths, command lines, customer identifiers, or other values are included in the final evidence bundle.
 
-        **3. Generate AI UDM mapping suggestions**
+        **2. Review normalized evidence**
 
-        The AI suggests how fields could map to UDM-style evidence fields. This is not internet research.
+        The app converts the alert into a UDM-style evidence model and extracts the most important investigation context: vendor, product, rule, severity, user, host, process, IPs, domains, URLs, hashes, and MITRE context.
 
-        **4. Review every mapping**
+        **3. Review and validate UDM mappings**
 
-        You are the quality gate. Accept, edit, or reject the suggested mappings.
+        When using the Auto Alert Extractor, the configured Claude API model can suggest how raw alert fields should map to UDM-style evidence fields. You are the quality gate: accept, edit, or reject the suggested mappings before they are used for the investigation.
 
-        **5. Build the final UDM evidence bundle**
+        **4. Build the final UDM evidence bundle**
 
-        Only approved mappings are used for the investigation.
+        Only approved mappings and analyst-provided fields are used to build the final evidence bundle. This bundle becomes the controlled investigation context for triage, hunting, CTI, and follow-up reassessment.
 
-        **6. Generate AI triage summary**
+        **5. Run AI triage assistance**
 
-        The AI summarizes suspicious evidence, benign explanations, missing evidence, and next steps.
+        Generate a triage assessment to understand why the alert may be suspicious, why it could be benign, what evidence is missing, and what next steps an analyst should take.
 
-        **7. Run CTI only when useful**
+        **6. Review attack path and alert validation hunts**
 
-        CTI research is optional and manual. It sends only safe public IOC-style values such as public IPs, domains, URLs, hashes, and sanitized command-line behavior.
+        A single alert rarely tells the full story. The real investigation value comes from checking related activity on the same host, user, IP, domain, hash, process, command line, or MITRE technique.  
+        Use the alert-centric hunts to decide whether this is an isolated event, part of a broader attack path, or benign activity.
 
-        **8. Paste follow-up evidence**
+        **7. Review MITRE context and similar TTPs**
 
-        Add hunt results or investigation notes to let the AI reassess the case.
+        The MITRE and attack-path view helps you understand how the alert may fit into a larger attacker behavior chain. It also helps you think beyond the original alert by looking for similar TTPs, related techniques, and comparable behavior across the environment.
 
-        **9. Submit feedback**
+        **8. Run CTI and follow-up IOC hunts when useful**
 
-        Your feedback helps improve ontology quality, mapping quality, hunt quality, and future threat-chain learning.
+        CTI research is optional and manual. It sends only selected safe public IOC-style values such as public IPs, domains, URLs, hashes, and sanitized command-line behavior.  
+        Use the generated IOC hunts to check whether the same indicators appear elsewhere in your SIEM, EDR, proxy, DNS, firewall, identity, or cloud data.
+
+        **9. Paste follow-up evidence**
+
+        Add hunt results, IOC hunt results, timeline notes, SIEM/EDR findings, CTI observations, or analyst investigation notes into the follow-up evidence section.  
+        The more relevant follow-up evidence you add, the better the final reassessment can judge whether this is a true incident, a false positive, or an activity that needs more investigation.
+
+        **10. Submit feedback**
+
+        Please share whether the output was helpful, which TTPs were confirmed or wrong, what evidence was missing, which hunts were useful, and what should be improved.
         """
     )
 
@@ -3057,15 +3069,22 @@ def render_analyst_app():
                 )
                 st.divider()
 
-    st.markdown("## 3. 🤖 AI summary")
+    st.markdown("## 3. 🧠 AI triage assistance")
 
-    if st.button("Generate AI Triage Summary", key="analyst_app_generate_claude"):
+    if st.button("Generate Triage Assessment", key="analyst_app_generate_claude"):
         with st.spinner("AI is analyzing the evidence bundle..."):
             st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
 
     render_simple_claude_result(st.session_state.claude_result)
 
     st.markdown("## 4. 🧭 Attack path and alert validation hunts")
+    st.info(
+        "🔎 Why alert-centric hunting matters: a single alert rarely tells the full story. "
+        "The real investigation value comes from checking related activity on the same host, user, IP, domain, hash, or technique. "
+        "Use the alert validation hunts and follow-up evidence section to decide whether this is an isolated event, "
+        "part of a broader attack path, or benign activity."
+    )
+
 
     render_attack_path_visualizer(
         attack_path=attack_path,
@@ -3195,47 +3214,56 @@ def render_public_guide_and_privacy():
 
     st.markdown(
         """
-        **1. Paste your alert into Auto Alert Extractor**
+        **1. Input alert**
 
-        The tool can process raw text, JSON, key-value dumps, and vendor alert exports from products such as EDR, SIEM, identity, email, proxy, DNS, firewall, and cloud platforms.
-
-        **2. Extract fields locally**
-
-        The app extracts visible fields and creates a key-value inventory.
-
-        **3. Generate AI UDM mapping suggestions**
-
-        The configured Claude API model suggests how fields could map to UDM-style evidence fields. This step is not internet research.
+        Start in the Analyst Workbench. For the fastest demo, open **Raw Alert JSON** and click **Analyze** on the preloaded demo alert.  
+        You can also use **Auto Alert Extractor** for messy raw alerts, or **Guided UDM Fields** when you want tighter control over what data is included.
 
         **Privacy-conscious alternative**
 
         If you are unsure whether the raw alert may be submitted to the configured AI API, use the local extraction step only. Review the extracted fields, then manually copy only the fields you are allowed to process into the Guided UDM Fields tab. This gives you full control over which usernames, hostnames, IPs, URLs, file paths, command lines, customer identifiers, or other values are included in the final evidence bundle.
 
-        **4. Review every mapping**
+        **2. Review normalized evidence**
 
-        You are the quality gate. Accept, edit, or reject the suggested mappings.
+        The app converts the alert into a UDM-style evidence model and extracts the most important investigation context: vendor, product, rule, severity, user, host, process, IPs, domains, URLs, hashes, and MITRE context.
 
-        **5. Build the final UDM evidence bundle**
+        **3. Review and validate UDM mappings**
 
-        Only approved mappings are used for the investigation.
+        When using the Auto Alert Extractor, the configured Claude API model can suggest how raw alert fields should map to UDM-style evidence fields. You are the quality gate: accept, edit, or reject the suggested mappings before they are used for the investigation.
 
-        **6. Generate AI triage summary**
+        **4. Build the final UDM evidence bundle**
 
-        The AI summarizes suspicious evidence, benign explanations, missing evidence, and next steps.
+        Only approved mappings and analyst-provided fields are used to build the final evidence bundle. This bundle becomes the controlled investigation context for triage, hunting, CTI, and follow-up reassessment.
 
-        **7. Run CTI only when useful**
+        **5. Run AI triage assistance**
 
-        CTI research is optional and manual. It sends only safe public IOC-style values such as public IPs, domains, URLs, hashes, and sanitized command-line behavior.
+        Generate a triage assessment to understand why the alert may be suspicious, why it could be benign, what evidence is missing, and what next steps an analyst should take.
 
-        **8. Paste follow-up evidence**
+        **6. Review attack path and alert validation hunts**
 
-        Add hunt results or investigation notes to let the AI reassess the case.
+        A single alert rarely tells the full story. The real investigation value comes from checking related activity on the same host, user, IP, domain, hash, process, command line, or MITRE technique.  
+        Use the alert-centric hunts to decide whether this is an isolated event, part of a broader attack path, or benign activity.
 
-        **9. Submit feedback**
+        **7. Review MITRE context and similar TTPs**
 
-        Your feedback helps improve ontology quality, mapping quality, hunt quality, and future threat-chain learning.
+        The MITRE and attack-path view helps you understand how the alert may fit into a larger attacker behavior chain. It also helps you think beyond the original alert by looking for similar TTPs, related techniques, and comparable behavior across the environment.
+
+        **8. Run CTI and follow-up IOC hunts when useful**
+
+        CTI research is optional and manual. It sends only selected safe public IOC-style values such as public IPs, domains, URLs, hashes, and sanitized command-line behavior.  
+        Use the generated IOC hunts to check whether the same indicators appear elsewhere in your SIEM, EDR, proxy, DNS, firewall, identity, or cloud data.
+
+        **9. Paste follow-up evidence**
+
+        Add hunt results, IOC hunt results, timeline notes, SIEM/EDR findings, CTI observations, or analyst investigation notes into the follow-up evidence section.  
+        The more relevant follow-up evidence you add, the better the final reassessment can judge whether this is a true incident, a false positive, or an activity that needs more investigation.
+
+        **10. Submit feedback**
+
+        Please share whether the output was helpful, which TTPs were confirmed or wrong, what evidence was missing, which hunts were useful, and what should be improved.
         """
     )
+
 
     st.markdown("## AI processing and data handling")
 
