@@ -398,3 +398,202 @@ def list_mapping_decisions(limit: int = 50, db_path: Path | str | None = None) -
         ).fetchall()
 
     return _rows_to_dicts(rows)
+
+
+
+def list_feedback_admin_comments(limit: int = 200) -> list[dict]:
+    """
+    Admin-focused feedback export.
+
+    Returns one row per feedback submission with the long-form analyst comments
+    that are most useful for product learning.
+    """
+    import json
+    import sqlite3
+
+    init_feedback_db()
+
+    def _table_columns(conn, table_name: str) -> set[str]:
+        try:
+            rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            return {row[1] for row in rows}
+        except Exception:
+            return set()
+
+    def _clean(value):
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value if item is not None)
+        if isinstance(value, dict):
+            return json.dumps(value, ensure_ascii=False)
+        return str(value)
+
+    def _deep_get(payload, candidate_keys):
+        if not isinstance(payload, dict):
+            return ""
+
+        def walk(obj, wanted_key):
+            if isinstance(obj, dict):
+                if wanted_key in obj and obj[wanted_key] not in (None, "", []):
+                    return obj[wanted_key]
+                for value in obj.values():
+                    found = walk(value, wanted_key)
+                    if found not in (None, "", []):
+                        return found
+            elif isinstance(obj, list):
+                for item in obj:
+                    found = walk(item, wanted_key)
+                    if found not in (None, "", []):
+                        return found
+            return ""
+
+        for key in candidate_keys:
+            found = walk(payload, key)
+            if found not in (None, "", []):
+                return _clean(found)
+
+        return ""
+
+    def _first(row_dict, payload, candidate_keys):
+        for key in candidate_keys:
+            value = row_dict.get(key)
+            if value not in (None, "", []):
+                return _clean(value)
+
+        return _deep_get(payload, candidate_keys)
+
+    with get_connection() as conn:
+        conn.row_factory = sqlite3.Row
+
+        feedback_cols = _table_columns(conn, "feedback_submissions")
+        session_cols = _table_columns(conn, "alert_sessions")
+
+        feedback_select = []
+        for col in feedback_cols:
+            feedback_select.append(f"f.{col} AS {col}")
+
+        session_select = []
+        for col in ["vendor", "product", "rule_name", "severity", "event_type", "input_source"]:
+            if col in session_cols:
+                session_select.append(f"s.{col} AS {col}")
+
+        if not feedback_select:
+            return []
+
+        join_sql = ""
+        if "alert_session_id" in feedback_cols and "id" in session_cols:
+            join_sql = "LEFT JOIN alert_sessions s ON f.alert_session_id = s.id"
+
+        order_col = "created_at" if "created_at" in feedback_cols else "id"
+
+        sql = f"""
+            SELECT
+                {", ".join(feedback_select + session_select)}
+            FROM feedback_submissions f
+            {join_sql}
+            ORDER BY f.{order_col} DESC
+            LIMIT ?
+        """
+
+        rows = conn.execute(sql, (limit,)).fetchall()
+
+    output = []
+
+    for row in rows:
+        row_dict = dict(row)
+
+        raw_payload = row_dict.get("full_feedback_json") or "{}"
+        try:
+            payload = json.loads(raw_payload) if isinstance(raw_payload, str) else {}
+        except Exception:
+            payload = {}
+
+        output.append(
+            {
+                "submitted_at": _first(row_dict, payload, ["created_at", "submitted_at"]),
+                "vendor": _first(row_dict, payload, ["vendor"]),
+                "product": _first(row_dict, payload, ["product"]),
+                "rule_name": _first(row_dict, payload, ["rule_name"]),
+                "severity": _first(row_dict, payload, ["severity"]),
+                "helpfulness": _first(row_dict, payload, ["helpfulness"]),
+                "analyst_verdict": _first(row_dict, payload, ["analyst_verdict"]),
+                "confidence_after": _first(row_dict, payload, ["confidence_after"]),
+                "would_use_for_customer_escalation": _first(
+                    row_dict,
+                    payload,
+                    ["would_use_for_customer_escalation", "customer_escalation"],
+                ),
+                "confirmed_ttps": _first(
+                    row_dict,
+                    payload,
+                    ["confirmed_ttps", "confirmed_ttp", "confirmed_tactics_techniques"],
+                ),
+                "suggested_but_not_confirmed_ttps": _first(
+                    row_dict,
+                    payload,
+                    [
+                        "suggested_but_not_confirmed_ttps",
+                        "rejected_ttps",
+                        "not_confirmed_ttps",
+                        "suggested_not_confirmed_ttps",
+                    ],
+                ),
+                "additional_ttps_found": _first(
+                    row_dict,
+                    payload,
+                    ["additional_ttps_found", "additional_ttps"],
+                ),
+                "missing_log_sources_or_evidence": _first(
+                    row_dict,
+                    payload,
+                    [
+                        "missing_log_sources_or_evidence",
+                        "missing_log_sources",
+                        "missing_evidence",
+                    ],
+                ),
+                "useful_hunts_or_pivots": _first(
+                    row_dict,
+                    payload,
+                    ["useful_hunts_or_pivots", "useful_hunts", "useful_pivots"],
+                ),
+                "bad_or_noisy_hunts_or_pivots": _first(
+                    row_dict,
+                    payload,
+                    [
+                        "bad_or_noisy_hunts_or_pivots",
+                        "bad_hunts",
+                        "noisy_hunts",
+                        "bad_or_noisy_hunts",
+                    ],
+                ),
+                "what_was_helpful": _first(
+                    row_dict,
+                    payload,
+                    ["what_was_helpful", "free_text_helpful", "helpful_feedback"],
+                ),
+                "what_was_wrong_or_missing": _first(
+                    row_dict,
+                    payload,
+                    [
+                        "what_was_wrong_or_missing",
+                        "free_text_wrong_or_missing",
+                        "wrong_or_missing_feedback",
+                    ],
+                ),
+                "ai_summary_quality": _first(row_dict, payload, ["ai_summary_quality"]),
+                "udm_mapping_quality": _first(row_dict, payload, ["udm_mapping_quality"]),
+                "ontology_quality": _first(row_dict, payload, ["ontology_quality"]),
+                "hunts_quality": _first(row_dict, payload, ["hunts_quality"]),
+                "cti_quality": _first(row_dict, payload, ["cti_quality"]),
+                "cti_was_run": _first(row_dict, payload, ["cti_was_run"]),
+                "has_followup_reassessment": _first(
+                    row_dict,
+                    payload,
+                    ["has_followup_reassessment"],
+                ),
+            }
+        )
+
+    return output

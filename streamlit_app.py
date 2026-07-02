@@ -2445,20 +2445,32 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
 
 def _is_admin_unlocked() -> bool:
     """
-    Simple MVP admin gate.
+    Fail-closed MVP admin gate.
 
-    For local development:
-    - If ADMIN_PASSWORD is not configured, admin mode is allowed.
+    Public release behavior:
+    - If ADMIN_PASSWORD is not configured, admin mode is disabled.
+    - If ADMIN_PASSWORD is configured, admin mode requires the password.
 
-    For public Streamlit Cloud:
-    - Set ADMIN_PASSWORD in Streamlit secrets.
+    Configure in Streamlit secrets:
+    ADMIN_PASSWORD = "your-long-random-admin-password"
     """
     admin_password = st.secrets.get("ADMIN_PASSWORD", "")
 
     if not admin_password:
-        return True
+        with st.sidebar.expander("Admin login", expanded=False):
+            st.info(
+                "Admin mode is disabled because ADMIN_PASSWORD is not configured."
+            )
+        return False
 
     if st.session_state.get("admin_unlocked"):
+        with st.sidebar.expander("Admin session", expanded=False):
+            st.success("Admin mode unlocked.")
+
+            if st.button("Lock admin mode", key="lock_admin_mode"):
+                st.session_state.admin_unlocked = False
+                st.rerun()
+
         return True
 
     with st.sidebar.expander("Admin login", expanded=False):
@@ -2658,6 +2670,77 @@ def render_admin_ontology_mapping_panel(current_alert: dict):
         st.error(f"Ontology mapping review failed: {type(error).__name__}: {error}")
 
 
+
+def render_admin_feedback_comments_table():
+    """
+    Admin-only long-form feedback view.
+    This is the most useful table for product learning.
+    """
+    import pandas as pd
+    from triage.feedback_db import list_feedback_admin_comments
+
+    st.markdown("### Feedback comments & learning notes")
+    st.caption(
+        "Long-form analyst feedback across missing evidence, useful hunts, noisy hunts, TTP learning, and product-quality comments."
+    )
+
+    rows = list_feedback_admin_comments(limit=200)
+
+    if not rows:
+        st.info("No detailed feedback comments stored yet.")
+        return
+
+    df = pd.DataFrame(rows)
+
+    preferred_columns = [
+        "submitted_at",
+        "vendor",
+        "product",
+        "rule_name",
+        "severity",
+        "helpfulness",
+        "analyst_verdict",
+        "confidence_after",
+        "would_use_for_customer_escalation",
+        "confirmed_ttps",
+        "suggested_but_not_confirmed_ttps",
+        "additional_ttps_found",
+        "missing_log_sources_or_evidence",
+        "useful_hunts_or_pivots",
+        "bad_or_noisy_hunts_or_pivots",
+        "what_was_helpful",
+        "what_was_wrong_or_missing",
+        "ai_summary_quality",
+        "udm_mapping_quality",
+        "ontology_quality",
+        "hunts_quality",
+        "cti_quality",
+        "cti_was_run",
+        "has_followup_reassessment",
+    ]
+
+    available_columns = [col for col in preferred_columns if col in df.columns]
+    df = df[available_columns]
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        height=420,
+    )
+
+    csv_data = df.to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        "Download feedback comments CSV",
+        data=csv_data,
+        file_name="udm_triage_lab_feedback_comments.csv",
+        mime="text/csv",
+        key="download_feedback_comments_csv",
+    )
+
+
+
 def render_admin_database_review_panel():
     """
     Admin-only feedback database review.
@@ -2665,6 +2748,9 @@ def render_admin_database_review_panel():
     st.markdown("## Feedback Database Review")
 
     render_feedback_database_status()
+
+    st.divider()
+    render_admin_feedback_comments_table()
 
     st.caption(
         "This reads the local SQLite feedback database. On Streamlit Community Cloud, "
