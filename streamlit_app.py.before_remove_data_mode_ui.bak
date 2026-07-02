@@ -2727,13 +2727,20 @@ def render_app_shell():
     Top-level app routing:
     - Public users see clean analyst UI.
     - Admin sees product lab with ontology and DB review.
-
-    data_mode is kept as a hidden internal default for backward compatibility
-    with the existing evidence bundle pipeline.
     """
     global data_mode
 
-    data_mode = "Analyst supplied alert data"
+    st.sidebar.markdown("### Data context")
+    data_mode = st.sidebar.radio(
+        "What type of alert data are you testing?",
+        ["Mock", "Anonymized", "Real"],
+        index=1,
+        help=(
+            "This context is passed into the AI evidence bundle so the assistant can reason "
+            "appropriately about demo, anonymized, or real alert data."
+        ),
+        key="global_data_mode_selector",
+    )
 
     admin_unlocked = _is_admin_unlocked()
 
@@ -3083,10 +3090,6 @@ def render_public_guide_and_privacy():
 
         The configured Claude API model suggests how fields could map to UDM-style evidence fields. This step is not internet research.
 
-        **Privacy-conscious alternative**
-
-        If you are unsure whether the raw alert may be submitted to the configured AI API, use the local extraction step only. Review the extracted fields, then manually copy only the fields you are allowed to process into the Guided UDM Fields tab. This gives you full control over which usernames, hostnames, IPs, URLs, file paths, command lines, customer identifiers, or other values are included in the final evidence bundle.
-
         **4. Review every mapping**
 
         You are the quality gate. Accept, edit, or reject the suggested mappings.
@@ -3146,18 +3149,11 @@ def render_public_guide_and_privacy():
         - Can include real alert fields such as usernames, hostnames, command lines, file paths, and URLs when you are authorized to process them.
         - Does not perform internet research.
         - Requires analyst validation before building the final evidence bundle.
-        - If you are unsure about privacy approval, use local extraction only and manually enter selected fields into Guided UDM Fields.
-
-        **AI Summary and Follow-up Reassessment**
-        - Use the final UDM evidence bundle created by the analyst.
-        - If you use Guided UDM Fields manually, only the fields you entered are included.
-        - This gives the analyst control over which sensitive values are submitted for AI reasoning.
 
         **CTI Internet Research**
         - Is optional and manually triggered.
-        - Sends only selected safe public IOC-style indicators.
-        - Applies stricter filtering than the AI Summary workflow.
-        - Excludes hostnames, usernames, private IPs, internal hostnames, local file paths, raw command lines, customer IDs, tenant IDs, vendor console URLs, traceability IDs, and MITRE TTPs where possible.
+        - Sends only selected safe public indicators.
+        - Excludes hostnames, usernames, private IPs, internal hostnames, local file paths, raw command lines, customer IDs, tenant IDs, vendor console URLs, and MITRE TTPs where possible.
         """
     )
 

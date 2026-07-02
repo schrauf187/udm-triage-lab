@@ -175,3 +175,96 @@ Future privacy guardrails may include:
 The original alert evidence should be preserved for traceability.
 
 The final UDM Analytics Evidence Bundle should include only validated mappings, while unmapped or vendor-specific fields can be preserved as additional evidence where useful.
+## AI Processing and Data Handling
+
+UDM Triage Lab uses Anthropic Claude through the commercial Anthropic API for controlled AI-assisted workflows:
+
+- Raw alert extraction and UDM mapping
+- AI-assisted investigation summary generation
+- Follow-up evidence reassessment
+- Optional CTI research assistance
+
+The AI service is used as a processing and recommendation layer. It is not used by this application as a model-training pipeline.
+
+When analysts use the Auto Alert Extractor, pasted alert content may be sent to the configured Claude API model for UDM mapping recommendations. This can include real alert evidence such as usernames, hostnames, file paths, URLs, command lines, IP addresses, hashes, rule names, and vendor fields if the analyst is authorized to process that data through the configured commercial API environment.
+
+Based on Anthropic's commercial API documentation, customer inputs and outputs submitted through commercial products such as the Anthropic API are not used to train Anthropic models by default. Anthropic's commercial retention documentation describes standard API deletion of inputs and outputs from the backend within 30 days, with listed exceptions.
+
+This application still treats every API submission as third-party processing. Users must only submit data where they have organizational, customer, lab, or contractual approval to do so.
+
+### Auto Alert Extractor vs CTI Research
+
+Auto Alert Extractor:
+
+- May send pasted alert content to the configured Claude API model for UDM mapping recommendations.
+- Does not perform internet research.
+- Requires analyst validation before the final UDM evidence bundle is built.
+
+CTI Internet Research:
+
+- Is optional and manually triggered.
+- Sends only selected public IOC-style values.
+- Excludes private IPs, internal hostnames, usernames, customer identifiers, raw command lines, local file paths, vendor console URLs, traceability IDs, and MITRE TTPs where possible.
+
+### Do Not Submit Secrets
+
+Do not paste API keys, passwords, access tokens, private keys, certificates, session cookies, credentials, or regulated data that you are not authorized to process.
+
+### Analyst Review Required
+
+AI-generated UDM mappings, investigation summaries, CTI conclusions, and follow-up reassessments are recommendations only. The analyst remains the final authority.
+
+## AI Processing and Data Handling
+
+UDM Triage Lab uses Anthropic Claude through the commercial Anthropic API for controlled AI-assisted workflows:
+
+- Raw alert extraction and UDM mapping
+- AI-assisted investigation summary generation
+- Follow-up evidence reassessment
+- Optional CTI research assistance
+
+The AI service is used as a processing and recommendation layer. It is not used by this application as a model-training pipeline.
+
+When analysts use the Auto Alert Extractor, pasted alert content may be sent to the configured Claude API model for UDM mapping recommendations. This can include real alert evidence such as usernames, hostnames, file paths, URLs, command lines, IP addresses, hashes, rule names, and vendor fields if the analyst is authorized to process that data through the configured commercial API environment.
+
+Based on Anthropic's commercial API documentation, customer inputs and outputs submitted through commercial products such as the Anthropic API are not used to train Anthropic models by default. Anthropic's commercial retention documentation describes standard API deletion of inputs and outputs from the backend within 30 days, with listed exceptions.
+
+This application still treats every API submission as third-party processing. Users must only submit data where they have organizational, customer, lab, or contractual approval to do so.
+
+### Auto Alert Extractor vs CTI Research
+
+Auto Alert Extractor:
+
+- May send pasted alert content to the configured Claude API model for UDM mapping recommendations.
+- Does not perform internet research.
+- Requires analyst validation before the final UDM evidence bundle is built.
+
+CTI Internet Research:
+
+- Is optional and manually triggered.
+- Sends only selected public IOC-style values.
+- Excludes private IPs, internal hostnames, usernames, customer identifiers, raw command lines, local file paths, vendor console URLs, traceability IDs, and MITRE TTPs where possible.
+
+### Do Not Submit Secrets
+
+Do not paste API keys, passwords, access tokens, private keys, certificates, session cookies, credentials, or regulated data that you are not authorized to process.
+
+### Analyst Review Required
+
+AI-generated UDM mappings, investigation summaries, CTI conclusions, and follow-up reassessments are recommendations only. The analyst remains the final authority.
+
+### Privacy-conscious workflow
+
+If you are unsure whether raw alert content may be submitted to the configured AI API, use the local extraction step only.
+
+Recommended controlled workflow:
+
+1. Paste the alert into Auto Alert Extractor.
+2. Run local field extraction.
+3. Do not run AI UDM mapping.
+4. Review the extracted field inventory.
+5. Manually copy only approved fields into Guided UDM Fields.
+6. Build the final UDM evidence bundle from those selected fields.
+7. Run AI Summary, optional CTI, and follow-up reassessment from the controlled evidence bundle.
+
+AI Summary and Follow-up Reassessment use the final analyst-approved UDM evidence bundle. CTI Internet Research applies stricter IOC filtering and excludes hostnames, usernames, private IPs, internal hostnames, local file paths, raw command lines, customer identifiers, tenant IDs, vendor console URLs, traceability IDs, and MITRE TTPs where possible.
