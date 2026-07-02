@@ -2422,8 +2422,7 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
         with st.expander("Latest database save result", expanded=False):
             st.json(st.session_state.last_feedback_db_result)
 
-    if st.session_state.get("admin_unlocked", False):
-        render_feedback_database_status()
+    render_feedback_database_status()
 
     if st.session_state.get("feedback_submissions"):
         total_feedback = len(st.session_state.feedback_submissions)

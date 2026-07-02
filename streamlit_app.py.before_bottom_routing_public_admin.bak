@@ -2422,8 +2422,7 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
         with st.expander("Latest database save result", expanded=False):
             st.json(st.session_state.last_feedback_db_result)
 
-    if st.session_state.get("admin_unlocked", False):
-        render_feedback_database_status()
+    render_feedback_database_status()
 
     if st.session_state.get("feedback_submissions"):
         total_feedback = len(st.session_state.feedback_submissions)
@@ -3043,11 +3042,68 @@ def render_analyst_app():
         st.json(evidence_bundle)
 
 
+st.title("🛡️ UDM Triage Lab")
+st.caption("Paste UDM-style alert JSON or build an alert using analyst-friendly fields.")
 
-# ---------------------------------------------------------------------
-# App entrypoint
-# Public users see the clean Analyst View.
-# Admin users can unlock the Product Lab with ontology and DB visibility.
-# ---------------------------------------------------------------------
+st.warning(
+    "Lab/demo use only. Do not paste real customer-sensitive data unless this runs in an approved private environment."
+)
 
-render_app_shell()
+data_mode = st.radio(
+    "Data mode",
+    ["Mock", "Anonymized", "Real"],
+    horizontal=True,
+)
+
+main_tab_lab, main_tab_analyst = st.tabs(["Advanced Lab", "Analyst App"])
+
+with main_tab_lab:
+    st.subheader("Advanced Lab")
+    st.caption(
+        "Developer/debug mode for raw UDM JSON, ontology inspection, MITRE enrichment and evidence bundle review."
+    )
+
+    with st.expander("Show sample UDM alert"):
+        st.code(json.dumps(sample_alert, indent=2), language="json")
+
+    udm_input = st.text_area(
+        "Paste UDM JSON here",
+        height=300,
+        value=json.dumps(sample_alert, indent=2),
+        key="advanced_raw_udm_json_input",
+    )
+
+    if st.button("Analyze Pasted Alert", key="advanced_analyze_pasted_alert"):
+        if not udm_input.strip():
+            st.error("Please paste JSON first.")
+        else:
+            try:
+                parsed_json = json.loads(udm_input)
+
+            except json.JSONDecodeError as error:
+                st.error("Invalid JSON.")
+                st.code(str(error))
+
+            else:
+                st.session_state.current_alert = parsed_json
+                st.session_state.current_alert_source = "Advanced Lab - Pasted UDM JSON"
+                st.session_state.claude_result = None
+                st.session_state.followup_result = None
+                st.session_state.cti_result = None
+                st.session_state.cti_researched = False
+                st.session_state.cti_package = None
+                st.success("Valid JSON detected. Alert loaded for analysis.")
+
+    if st.session_state.current_alert is not None:
+        st.divider()
+        st.caption(f"Current alert source: {st.session_state.current_alert_source}")
+        render_analysis(st.session_state.current_alert)
+
+        st.divider()
+        render_cti_followup_testing_panel(st.session_state.current_alert, key_prefix="advanced_lab")
+    else:
+        st.info("Paste a UDM alert above and click Analyze to start advanced analysis.")
+
+
+with main_tab_analyst:
+    render_analyst_app()

@@ -2422,8 +2422,7 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
         with st.expander("Latest database save result", expanded=False):
             st.json(st.session_state.last_feedback_db_result)
 
-    if st.session_state.get("admin_unlocked", False):
-        render_feedback_database_status()
+    render_feedback_database_status()
 
     if st.session_state.get("feedback_submissions"):
         total_feedback = len(st.session_state.feedback_submissions)
@@ -2438,310 +2437,6 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
                     f"{item.get('analyst_verdict', 'unknown verdict')} — "
                     f"Helpful: {item.get('helpfulness', 'unknown')}"
                 )
-
-
-
-def _is_admin_unlocked() -> bool:
-    """
-    Simple MVP admin gate.
-
-    For local development:
-    - If ADMIN_PASSWORD is not configured, admin mode is allowed.
-
-    For public Streamlit Cloud:
-    - Set ADMIN_PASSWORD in Streamlit secrets.
-    """
-    admin_password = st.secrets.get("ADMIN_PASSWORD", "")
-
-    if not admin_password:
-        return True
-
-    if st.session_state.get("admin_unlocked"):
-        return True
-
-    with st.sidebar.expander("Admin login", expanded=False):
-        entered_password = st.text_input(
-            "Admin password",
-            type="password",
-            key="admin_password_input",
-        )
-
-        if st.button("Unlock admin mode", key="unlock_admin_mode"):
-            if entered_password == admin_password:
-                st.session_state.admin_unlocked = True
-                st.success("Admin mode unlocked.")
-                st.rerun()
-            else:
-                st.error("Wrong admin password.")
-
-    return False
-
-
-def render_public_guide_and_privacy():
-    """
-    Public-facing guide and privacy explanation for LinkedIn alpha users.
-    """
-    st.markdown("# How to use UDM Triage Lab")
-
-    st.info(
-        "UDM Triage Lab is an experimental SOC analyst assistant. "
-        "It helps convert messy security alerts into structured UDM-style evidence, "
-        "then supports triage, CTI-safe IOC research, follow-up reassessment, and analyst feedback."
-    )
-
-    st.markdown("## Recommended workflow")
-
-    st.markdown(
-        """
-        **1. Paste your alert into Auto Alert Extractor**
-
-        Use demo, lab, NFR, synthetic, or approved alert data. The tool can handle raw text, JSON, key-value dumps, and vendor alert exports.
-
-        **2. Extract fields locally**
-
-        The app extracts visible fields and creates a key-value inventory.
-
-        **3. Generate AI UDM mapping suggestions**
-
-        The AI suggests how fields could map to UDM-style evidence fields. This is not internet research.
-
-        **4. Review every mapping**
-
-        You are the quality gate. Accept, edit, or reject the suggested mappings.
-
-        **5. Build the final UDM evidence bundle**
-
-        Only approved mappings are used for the investigation.
-
-        **6. Generate AI triage summary**
-
-        The AI summarizes suspicious evidence, benign explanations, missing evidence, and next steps.
-
-        **7. Run CTI only when useful**
-
-        CTI research is optional and manual. It sends only safe public IOC-style values such as public IPs, domains, URLs, hashes, and sanitized command-line behavior.
-
-        **8. Paste follow-up evidence**
-
-        Add hunt results or investigation notes to let the AI reassess the case.
-
-        **9. Submit feedback**
-
-        Your feedback helps improve ontology quality, mapping quality, hunt quality, and future threat-chain learning.
-        """
-    )
-
-    st.markdown("## What data may be sent to AI?")
-
-    st.warning(
-        "Auto Alert Extractor may send the pasted alert content to the configured AI model "
-        "for extraction and UDM mapping assistance. Do not paste real customer-sensitive data "
-        "unless your environment, customer approvals, and data-processing terms allow it."
-    )
-
-    st.markdown(
-        """
-        **Auto Alert Extractor**
-        - Sends pasted alert content to the AI model for UDM mapping recommendations.
-        - Does not perform internet research.
-        - Requires analyst validation before building the final evidence bundle.
-
-        **CTI Internet Research**
-        - Is optional and manually triggered.
-        - Sends only selected safe public indicators.
-        - Does not send hostnames, usernames, internal IPs, local file paths, raw command lines, customer IDs, tenant IDs, vendor console URLs, or MITRE TTPs.
-        """
-    )
-
-    st.markdown("## Data you should avoid in public alpha")
-
-    st.markdown(
-        """
-        Avoid pasting:
-        - Real customer names
-        - Personal data
-        - Production incident data without approval
-        - Tenant IDs or subscription IDs
-        - Internal hostnames and internal IPs
-        - Usernames and email addresses
-        - Raw command lines containing sensitive paths or secrets
-        - API keys, tokens, passwords, or secrets
-        - Case IDs, ticket IDs, or vendor-console URLs from real environments
-        """
-    )
-
-    st.markdown("## Analyst responsibility")
-
-    st.success(
-        "The AI provides recommendations only. The analyst remains the final authority. "
-        "Do not escalate, close, or classify an incident based only on AI output."
-    )
-
-    st.markdown("## Alpha limitations")
-
-    st.markdown(
-        """
-        This is an alpha release. Expect limitations:
-
-        - UDM mappings may need editing.
-        - The ontology is still expanding.
-        - CTI filtering is conservative by design.
-        - Local SQLite feedback storage may not be persistent on Streamlit Community Cloud.
-        - The tool does not connect directly to your SIEM, EDR, or customer environment.
-        - The tool is designed for analyst learning, triage support, and product feedback.
-        """
-    )
-
-
-def render_admin_ontology_mapping_panel(current_alert: dict):
-    """
-    Admin-only ontology visibility, similar to Advanced Lab but focused on ontology enrichment.
-    """
-    st.markdown("## Ontology Mapping Review")
-
-    if not current_alert:
-        st.info("Load an alert first to review ontology mapping.")
-        return
-
-    try:
-        pipeline = build_pipeline(current_alert)
-        enriched_table = pipeline.get("enriched_table", [])
-        semantic_facts = pipeline.get("semantic_facts", [])
-
-        st.markdown("### Enriched ontology table")
-        st.dataframe(
-            enriched_table,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.markdown("### High-value semantic facts")
-        high_value = [
-            row for row in semantic_facts
-            if int(row.get("importance", 1)) >= 8
-        ]
-
-        if high_value:
-            for fact in high_value[:25]:
-                st.markdown(
-                    f"""
-                    <div class="compact-info">
-                    <b>{escape(str(fact.get("source_field", fact.get("field", ""))))}</b>
-                    — Importance {escape(str(fact.get("importance", "")))}<br>
-                    <b>Role:</b> {escape(str(fact.get("evidence_role", "")))}<br>
-                    <b>Meaning:</b> {escape(str(fact.get("meaning", "")))}<br>
-                    <b>Fact:</b> {escape(str(fact.get("fact", "")))}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        else:
-            st.info("No high-value ontology facts found yet.")
-
-        missing_fields = [
-            row.get("source_field", row.get("field", ""))
-            for row in enriched_table
-            if row.get("ontology_status") == "missing"
-        ]
-
-        st.markdown("### Missing ontology fields")
-
-        if missing_fields:
-            st.warning(f"{len(missing_fields)} fields have no ontology entry yet.")
-            st.json(missing_fields)
-        else:
-            st.success("All current fields have ontology coverage.")
-
-    except Exception as error:
-        st.error(f"Ontology mapping review failed: {type(error).__name__}: {error}")
-
-
-def render_admin_database_review_panel():
-    """
-    Admin-only feedback database review.
-    """
-    st.markdown("## Feedback Database Review")
-
-    render_feedback_database_status()
-
-    st.caption(
-        "This reads the local SQLite feedback database. On Streamlit Community Cloud, "
-        "local database persistence may be temporary. Export regularly during alpha testing."
-    )
-
-
-def render_public_app_shell():
-    """
-    Clean public UI for LinkedIn alpha.
-    """
-    st.markdown("# UDM Triage Lab")
-    st.caption("AI-assisted SOC alert normalization, triage, CTI-safe IOC research, and analyst feedback.")
-
-    public_tabs = st.tabs(
-        [
-            "Analyst Workbench",
-            "How to Use & Privacy",
-        ]
-    )
-
-    with public_tabs[0]:
-        render_analyst_app()
-
-    with public_tabs[1]:
-        render_public_guide_and_privacy()
-
-
-def render_admin_product_lab_shell():
-    """
-    Admin/Product Lab UI for Chris.
-    Keeps the current analyst experience and adds ontology and database visibility.
-    """
-    st.markdown("# UDM Triage Lab — Admin / Product Lab")
-
-    admin_tabs = st.tabs(
-        [
-            "Analyst Workbench",
-            "Ontology Mapping",
-            "Feedback Database",
-            "How to Use & Privacy",
-        ]
-    )
-
-    with admin_tabs[0]:
-        render_analyst_app()
-
-    with admin_tabs[1]:
-        render_admin_ontology_mapping_panel(st.session_state.get("current_alert"))
-
-    with admin_tabs[2]:
-        render_admin_database_review_panel()
-
-    with admin_tabs[3]:
-        render_public_guide_and_privacy()
-
-
-def render_app_shell():
-    """
-    Top-level app routing:
-    - Public users see clean analyst UI.
-    - Admin sees product lab with ontology and DB review.
-    """
-    admin_unlocked = _is_admin_unlocked()
-
-    if admin_unlocked:
-        mode = st.sidebar.radio(
-            "App mode",
-            ["Public Analyst View", "Admin / Product Lab"],
-            index=1,
-            key="app_mode_selector",
-        )
-    else:
-        mode = "Public Analyst View"
-
-    if mode == "Admin / Product Lab":
-        render_admin_product_lab_shell()
-    else:
-        render_public_app_shell()
 
 
 def render_analyst_app():
@@ -3043,11 +2738,68 @@ def render_analyst_app():
         st.json(evidence_bundle)
 
 
+st.title("🛡️ UDM Triage Lab")
+st.caption("Paste UDM-style alert JSON or build an alert using analyst-friendly fields.")
 
-# ---------------------------------------------------------------------
-# App entrypoint
-# Public users see the clean Analyst View.
-# Admin users can unlock the Product Lab with ontology and DB visibility.
-# ---------------------------------------------------------------------
+st.warning(
+    "Lab/demo use only. Do not paste real customer-sensitive data unless this runs in an approved private environment."
+)
 
-render_app_shell()
+data_mode = st.radio(
+    "Data mode",
+    ["Mock", "Anonymized", "Real"],
+    horizontal=True,
+)
+
+main_tab_lab, main_tab_analyst = st.tabs(["Advanced Lab", "Analyst App"])
+
+with main_tab_lab:
+    st.subheader("Advanced Lab")
+    st.caption(
+        "Developer/debug mode for raw UDM JSON, ontology inspection, MITRE enrichment and evidence bundle review."
+    )
+
+    with st.expander("Show sample UDM alert"):
+        st.code(json.dumps(sample_alert, indent=2), language="json")
+
+    udm_input = st.text_area(
+        "Paste UDM JSON here",
+        height=300,
+        value=json.dumps(sample_alert, indent=2),
+        key="advanced_raw_udm_json_input",
+    )
+
+    if st.button("Analyze Pasted Alert", key="advanced_analyze_pasted_alert"):
+        if not udm_input.strip():
+            st.error("Please paste JSON first.")
+        else:
+            try:
+                parsed_json = json.loads(udm_input)
+
+            except json.JSONDecodeError as error:
+                st.error("Invalid JSON.")
+                st.code(str(error))
+
+            else:
+                st.session_state.current_alert = parsed_json
+                st.session_state.current_alert_source = "Advanced Lab - Pasted UDM JSON"
+                st.session_state.claude_result = None
+                st.session_state.followup_result = None
+                st.session_state.cti_result = None
+                st.session_state.cti_researched = False
+                st.session_state.cti_package = None
+                st.success("Valid JSON detected. Alert loaded for analysis.")
+
+    if st.session_state.current_alert is not None:
+        st.divider()
+        st.caption(f"Current alert source: {st.session_state.current_alert_source}")
+        render_analysis(st.session_state.current_alert)
+
+        st.divider()
+        render_cti_followup_testing_panel(st.session_state.current_alert, key_prefix="advanced_lab")
+    else:
+        st.info("Paste a UDM alert above and click Analyze to start advanced analysis.")
+
+
+with main_tab_analyst:
+    render_analyst_app()
