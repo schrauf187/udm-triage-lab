@@ -180,3 +180,19 @@ data/*.sqlite3
 
 # Local Streamlit secrets
 .streamlit/secrets.toml
+
+# Local patch backups
+*.bak
+*.before*
+
+# Local Streamlit secrets
+.streamlit/secrets.toml
+
+# Local SQLite feedback databases
+data/*.sqlite
+data/*.sqlite3
+*.sqlite
+*.sqlite3
+
+# Local backups
+local_backups/
