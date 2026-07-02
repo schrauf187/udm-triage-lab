@@ -95,36 +95,63 @@ sample_alert = {
     "metadata.event_type": "PROCESS_LAUNCH",
     "metadata.vendor_name": "Microsoft",
     "metadata.product_name": "Defender for Endpoint",
+    "metadata.description": "Public demo alert for UDM Triage Lab. This sample uses EICAR test indicators and fictional host/user context.",
 
-    "security_result.rule_name": "Suspicious PowerShell Launched from Office",
-    "security_result.rule_id": "CFC-WIN-POWERSHELL-OFFICE-001",
-    "security_result.display_name": "Office spawned encoded PowerShell",
-    "security_result.summary": "Microsoft Word launched PowerShell with encoded command content.",
-    "security_result.description": "This alert identifies suspicious process execution where an Office application starts PowerShell using encoded command-line arguments.",
+    "security_result.rule_name": "Suspicious Office Child Process With Encoded PowerShell",
+    "security_result.rule_id": "DEMO-MDE-OFFICE-PS-EICAR-001",
+    "security_result.display_name": "Office spawned encoded PowerShell and attempted test-file download",
+    "security_result.summary": "Microsoft Word launched PowerShell with encoded command content and attempted to download the EICAR anti-malware test file.",
+    "security_result.description": "This public demo alert simulates a suspicious Office-to-PowerShell execution chain. The external indicator is the EICAR anti-malware test file, which is safe and commonly used to validate security controls.",
     "security_result.severity": "HIGH",
     "security_result.priority": "HIGH_PRIORITY",
-    "security_result.risk_score": 85,
+    "security_result.risk_score": 82,
+    "security_result.action": "BLOCK",
 
-    "security_result.attack_details.version": "14.1",
+    "security_result.attack_details.version": "17.0",
     "security_result.attack_details.tactics[0].id": "TA0002",
     "security_result.attack_details.tactics[0].name": "Execution",
     "security_result.attack_details.tactics[1].id": "TA0005",
     "security_result.attack_details.tactics[1].name": "Defense Evasion",
+    "security_result.attack_details.tactics[2].id": "TA0011",
+    "security_result.attack_details.tactics[2].name": "Command and Control",
+
     "security_result.attack_details.techniques[0].id": "T1059",
     "security_result.attack_details.techniques[0].name": "Command and Scripting Interpreter",
     "security_result.attack_details.techniques[0].subtechnique_id": "T1059.001",
     "security_result.attack_details.techniques[0].subtechnique_name": "PowerShell",
     "security_result.attack_details.techniques[1].id": "T1027",
     "security_result.attack_details.techniques[1].name": "Obfuscated Files or Information",
+    "security_result.attack_details.techniques[2].id": "T1105",
+    "security_result.attack_details.techniques[2].name": "Ingress Tool Transfer",
+    "security_result.attack_details.techniques[3].id": "T1204",
+    "security_result.attack_details.techniques[3].name": "User Execution",
 
-    "principal.user.userid": "svc_backup",
-    "principal.asset.hostname": "WIN-SRV-22",
+    "principal.user.userid": "j.smith",
+    "principal.user.email_addresses[0]": "j.smith@example-corp.local",
+    "principal.asset.hostname": "ADMIN-SRV-01",
+    "principal.asset.ip[0]": "10.20.30.15",
+    "principal.asset.asset_id": "DEMO-ASSET-ADMIN-SRV-01",
+    "principal.asset.platform": "WINDOWS",
+
     "principal.process.file.full_path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-    "principal.process.command_line": "powershell.exe -enc SQBFAFgA...",
-    "principal.process.parent_process.file.full_path": "C:\\Program Files\\Microsoft Office\\winword.exe",
+    "principal.process.file.sha256": "8f3a2f6d9b4e4f1a7c9d6e5b2a1c0d9f8e7a6b5c4d3e2f1a9b8c7d6e5f4a3b2c1",
+    "principal.process.command_line": "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand <base64-redacted>",
+    "principal.process.parent_process.file.full_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+    "principal.process.parent_process.command_line": "WINWORD.EXE C:\\Users\\j.smith\\Downloads\\Quarterly_Bonus_Review.docm",
 
-    "security_result.action": "ALLOW",
-    "target.ip": "185.199.108.133",
+    "target.url": "https://secure.eicar.org/eicar.com.txt",
+    "target.domain.name": "secure.eicar.org",
+    "target.file.full_path": "C:\\ProgramData\\AdobeCache\\invoice_viewer.com",
+    "target.file.sha256": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
+    "target.file.names[0]": "invoice_viewer.com",
+
+    "network.http.method": "GET",
+    "network.http.user_agent": "Mozilla/5.0 PowerShell/7.4",
+    "network.direction": "OUTBOUND",
+
+    "additional.fields.demo_context": "Safe public demo. Host, user, and internal IP are fictional. External indicator is EICAR test infrastructure.",
+    "additional.fields.expected_cti_result": "CTI should identify EICAR as a safe anti-malware test file, not real malware.",
+    "additional.fields.analyst_learning_goal": "Validate Office child process behavior, encoded PowerShell, external file retrieval, CTI-safe indicator handling, and analyst feedback flow."
 }
 
 def inject_compact_ui_css():
@@ -2849,6 +2876,16 @@ def render_analyst_app():
         "Fill in the key alert details. The app converts them into a normalized UDM-style evidence model behind the scenes."
     )
 
+    st.info(
+        "Demo tip: for a quick walkthrough, open the Raw Alert JSON tab and click Analyze the preloaded demo alert. "
+        "This shows the full workflow without needing your own alert data."
+    )
+
+    st.success(
+        "🙏 🙂 Please share feedback before you leave. "
+        "Your notes help improve the AI summary, UDM mapping, ontology, hunts, CTI filtering, and overall analyst workflow."
+    )
+
     render_analyst_input_area()
 
     if st.session_state.current_alert is None:
@@ -3110,6 +3147,7 @@ def render_analyst_app():
     render_followup_reassessment_result(st.session_state.followup_result)
 
     st.divider()
+
     render_feedback_learning_interface(
         current_alert=st.session_state.current_alert,
         pipeline=pipeline,
