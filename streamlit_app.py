@@ -2549,134 +2549,6 @@ def _is_admin_unlocked() -> bool:
     return False
 
 
-def render_public_guide_and_privacy():
-    """
-    Public-facing guide and privacy explanation for LinkedIn alpha users.
-    """
-    st.markdown("# How to use UDM Triage Lab")
-
-    st.info(
-        "UDM Triage Lab is an experimental SOC analyst assistant. "
-        "It helps convert messy security alerts into structured UDM-style evidence, "
-        "then supports triage, CTI-safe IOC research, follow-up reassessment, and analyst feedback."
-    )
-
-    st.markdown("## Recommended workflow")
-
-    st.markdown(
-        """
-        **1. Input alert**
-
-        Start in the Analyst Workbench. For the fastest demo, open **Raw Alert JSON** and click **Analyze** on the preloaded demo alert.  
-        You can also use **Auto Alert Extractor** for messy raw alerts, or **Guided UDM Fields** when you want tighter control over what data is included.
-
-        **Privacy-conscious alternative**
-
-        If you are unsure whether the raw alert may be submitted to the configured AI API, use the local extraction step only. Review the extracted fields, then manually copy only the fields you are allowed to process into the Guided UDM Fields tab. This gives you full control over which usernames, hostnames, IPs, URLs, file paths, command lines, customer identifiers, or other values are included in the final evidence bundle.
-
-        **2. Review normalized evidence**
-
-        The app converts the alert into a UDM-style evidence model and extracts the most important investigation context: vendor, product, rule, severity, user, host, process, IPs, domains, URLs, hashes, and MITRE context.
-
-        **3. Review and validate UDM mappings**
-
-        When using the Auto Alert Extractor, the configured Claude API model can suggest how raw alert fields should map to UDM-style evidence fields. You are the quality gate: accept, edit, or reject the suggested mappings before they are used for the investigation.
-
-        **4. Build the final UDM evidence bundle**
-
-        Only approved mappings and analyst-provided fields are used to build the final evidence bundle. This bundle becomes the controlled investigation context for triage, hunting, CTI, and follow-up reassessment.
-
-        **5. Run AI triage assistance**
-
-        Generate a triage assessment to understand why the alert may be suspicious, why it could be benign, what evidence is missing, and what next steps an analyst should take.
-
-        **6. Review attack path and alert validation hunts**
-
-        A single alert rarely tells the full story. The real investigation value comes from checking related activity on the same host, user, IP, domain, hash, process, command line, or MITRE technique.  
-        Use the alert-centric hunts to decide whether this is an isolated event, part of a broader attack path, or benign activity.
-
-        **7. Review MITRE context and similar TTPs**
-
-        The MITRE and attack-path view helps you understand how the alert may fit into a larger attacker behavior chain. It also helps you think beyond the original alert by looking for similar TTPs, related techniques, and comparable behavior across the environment.
-
-        **8. Run CTI and follow-up IOC hunts when useful**
-
-        CTI research is optional and manual. It sends only selected safe public IOC-style values such as public IPs, domains, URLs, hashes, and sanitized command-line behavior.  
-        Use the generated IOC hunts to check whether the same indicators appear elsewhere in your SIEM, EDR, proxy, DNS, firewall, identity, or cloud data.
-
-        **9. Paste follow-up evidence**
-
-        Add hunt results, IOC hunt results, timeline notes, SIEM/EDR findings, CTI observations, or analyst investigation notes into the follow-up evidence section.  
-        The more relevant follow-up evidence you add, the better the final reassessment can judge whether this is a true incident, a false positive, or an activity that needs more investigation.
-
-        **10. Submit feedback**
-
-        Please share whether the output was helpful, which TTPs were confirmed or wrong, what evidence was missing, which hunts were useful, and what should be improved.
-        """
-    )
-
-    st.markdown("## What data may be sent to AI?")
-
-    st.warning(
-        "Auto Alert Extractor may send the pasted alert content to the configured AI model "
-        "for extraction and UDM mapping assistance. Do not paste real customer-sensitive data "
-        "unless your environment, customer approvals, and data-processing terms allow it."
-    )
-
-    st.markdown(
-        """
-        **Auto Alert Extractor**
-        - Sends pasted alert content to the AI model for UDM mapping recommendations.
-        - Does not perform internet research.
-        - Requires analyst validation before building the final evidence bundle.
-
-        **CTI Internet Research**
-        - Is optional and manually triggered.
-        - Sends only selected safe public indicators.
-        - Does not send hostnames, usernames, internal IPs, local file paths, raw command lines, customer IDs, tenant IDs, vendor console URLs, or MITRE TTPs.
-        """
-    )
-
-    st.markdown("## Data you should avoid in public alpha")
-
-    st.markdown(
-        """
-        Avoid pasting:
-        - Real customer names
-        - Personal data
-        - Production incident data without approval
-        - Tenant IDs or subscription IDs
-        - Internal hostnames and internal IPs
-        - Usernames and email addresses
-        - Raw command lines containing sensitive paths or secrets
-        - API keys, tokens, passwords, or secrets
-        - Case IDs, ticket IDs, or vendor-console URLs from real environments
-        """
-    )
-
-    st.markdown("## Analyst responsibility")
-
-    st.success(
-        "The AI provides recommendations only. The analyst remains the final authority. "
-        "Do not escalate, close, or classify an incident based only on AI output."
-    )
-
-    st.markdown("## Alpha limitations")
-
-    st.markdown(
-        """
-        This is an alpha release. Expect limitations:
-
-        - UDM mappings may need editing.
-        - The ontology is still expanding.
-        - CTI filtering is conservative by design.
-        - Local SQLite feedback storage may not be persistent on Streamlit Community Cloud.
-        - The tool does not connect directly to your SIEM, EDR, or customer environment.
-        - The tool is designed for analyst learning, triage support, and product feedback.
-        """
-    )
-
-
 def render_admin_ontology_mapping_panel(current_alert: dict):
     """
     Admin-only ontology visibility, similar to Advanced Lab but focused on ontology enrichment.
@@ -3230,172 +3102,122 @@ def render_analyst_app():
 
 def render_public_guide_and_privacy():
     """
-    Public-facing guide and privacy explanation for LinkedIn alpha users.
-    Updated wording: real alert evidence may be processed when the analyst is authorized to use the configured commercial API environment.
+    Public-facing guide and privacy explanation for alpha users.
     """
     st.markdown("# How to use UDM Triage Lab")
 
     st.info(
-        "UDM Triage Lab is an experimental SOC analyst assistant. "
-        "It helps convert messy security alerts into structured UDM-style evidence, "
-        "then supports triage, CTI-safe IOC research, follow-up reassessment, and analyst feedback."
+        "An experimental SOC analyst assistant: it converts messy security alerts into "
+        "structured UDM-style evidence, then supports triage, CTI-safe IOC research, "
+        "follow-up reassessment, and analyst feedback. "
+        "**The analyst is the trust boundary — every AI output is a suggestion for you "
+        "to validate, never a verdict.**"
     )
 
     st.markdown("## Recommended workflow")
 
     st.markdown(
-        """
-        **1. Input alert**
-
-        Start in the Analyst Workbench. For the fastest demo, open **Raw Alert JSON** and click **Analyze** on the preloaded demo alert.  
-        You can also use **Auto Alert Extractor** for messy raw alerts, or **Guided UDM Fields** when you want tighter control over what data is included.
-
-        **Privacy-conscious alternative**
-
-        If you are unsure whether the raw alert may be submitted to the configured AI API, use the local extraction step only. Review the extracted fields, then manually copy only the fields you are allowed to process into the Guided UDM Fields tab. This gives you full control over which usernames, hostnames, IPs, URLs, file paths, command lines, customer identifiers, or other values are included in the final evidence bundle.
-
-        **2. Review normalized evidence**
-
-        The app converts the alert into a UDM-style evidence model and extracts the most important investigation context: vendor, product, rule, severity, user, host, process, IPs, domains, URLs, hashes, and MITRE context.
-
-        **3. Review and validate UDM mappings**
-
-        When using the Auto Alert Extractor, the configured Claude API model can suggest how raw alert fields should map to UDM-style evidence fields. You are the quality gate: accept, edit, or reject the suggested mappings before they are used for the investigation.
-
-        **4. Build the final UDM evidence bundle**
-
-        Only approved mappings and analyst-provided fields are used to build the final evidence bundle. This bundle becomes the controlled investigation context for triage, hunting, CTI, and follow-up reassessment.
-
-        **5. Run AI triage assistance**
-
-        Generate a triage assessment to understand why the alert may be suspicious, why it could be benign, what evidence is missing, and what next steps an analyst should take.
-
-        **6. Review attack path and alert validation hunts**
-
-        A single alert rarely tells the full story. The real investigation value comes from checking related activity on the same host, user, IP, domain, hash, process, command line, or MITRE technique.  
-        Use the alert-centric hunts to decide whether this is an isolated event, part of a broader attack path, or benign activity.
-
-        **7. Review MITRE context and similar TTPs**
-
-        The MITRE and attack-path view helps you understand how the alert may fit into a larger attacker behavior chain. It also helps you think beyond the original alert by looking for similar TTPs, related techniques, and comparable behavior across the environment.
-
-        **8. Run CTI and follow-up IOC hunts when useful**
-
-        CTI research is optional and manual. It sends only selected safe public IOC-style values such as public IPs, domains, URLs, hashes, and sanitized command-line behavior.  
-        Use the generated IOC hunts to check whether the same indicators appear elsewhere in your SIEM, EDR, proxy, DNS, firewall, identity, or cloud data.
-
-        **9. Paste follow-up evidence**
-
-        Add hunt results, IOC hunt results, timeline notes, SIEM/EDR findings, CTI observations, or analyst investigation notes into the follow-up evidence section.  
-        The more relevant follow-up evidence you add, the better the final reassessment can judge whether this is a true incident, a false positive, or an activity that needs more investigation.
-
-        **10. Submit feedback**
-
-        Please share whether the output was helpful, which TTPs were confirmed or wrong, what evidence was missing, which hunts were useful, and what should be improved.
-        """
+"""
+1. **Input alert** — Start in the Analyst Workbench. Fastest demo: open *Raw Alert JSON* and click Analyze on the preloaded demo alert. Use *Auto Alert Extractor* for messy raw alerts, or *Guided UDM Fields* for tight control over what data is included.
+2. **Review normalized evidence** — the app converts the alert into a UDM-style evidence model: vendor, product, rule, severity, user, host, process, IPs, domains, URLs, hashes, MITRE context.
+3. **Validate UDM mappings** — with Auto Alert Extractor, the AI suggests how raw fields map to UDM evidence fields. You are the quality gate: accept, edit, or reject each mapping.
+4. **Build the final evidence bundle** — only approved mappings and analyst-provided fields become the controlled investigation context for everything downstream.
+5. **Run AI triage assistance** — why the alert may be suspicious, why it could be benign, what evidence is missing, what to do next.
+6. **Work the attack path & validation hunts** — a single alert rarely tells the full story. Use the alert-centric hunts (same host, user, IP, domain, hash, process, technique) to decide: isolated event, part of a broader attack path, or benign.
+7. **Review MITRE context and similar TTPs** — how the alert may fit a larger attacker behavior chain; look for related techniques and comparable behavior.
+8. **Optional: CTI research & IOC hunts** — manually triggered, sends only selected safe public IOC-style values (public IPs, domains, URLs, hashes, sanitized command patterns). Use the IOC hunts across your SIEM, EDR, proxy, DNS, firewall, identity, and cloud data.
+9. **Paste follow-up evidence** — hunt results, timeline notes, SIEM/EDR findings, CTI observations. The more relevant follow-up evidence, the better the final reassessment can judge TP / FP / needs-more-investigation.
+10. **Submit feedback** — was the output helpful, which TTPs were confirmed or wrong, what was missing, which hunts were useful. This feedback is the point of the project.
+"""
     )
 
+    st.markdown("---")
 
-    st.markdown("## AI processing and data handling")
+    st.markdown("## Your data & privacy")
+
+    st.markdown(
+"""
+**What happens to your input:** when you use Auto Alert Extractor, AI Summary, Follow-up Reassessment, or CTI Research, selected content is sent to the Anthropic Claude API (commercial API) to generate recommendations — the same processing pattern as AI assistants built into commercial SOC platforms.
+
+**No model training:** per Anthropic's commercial API terms, inputs and outputs are not used to train Anthropic models by default. Anthropic describes standard API retention as automatic deletion within 30 days, with listed exceptions. This app does not train any model on your data.
+
+**What this app stores:** nothing, except feedback you explicitly submit (verdict + comments), in a small local database the operator can read. Don't put sensitive details in feedback text. On Streamlit Community Cloud this storage may not persist.
+"""
+    )
+
+    st.markdown("### Working with real alerts? Pseudonymize before you paste.")
+
+    st.markdown(
+r"""
+In alert-stage triage, personal data lives in a handful of field types. Rename them consistently before pasting (same placeholder for the same entity, so correlations survive):
+
+| Replace | With |
+|---|---|
+| Hostnames (`DE-LT-4711`) | `HOST-A`, `HOST-B`, … |
+| Usernames / emails (`m.mueller@…`) | `USER-1`, `USER-1@example.com`, … |
+| Private/internal IPs | `10.0.0.1`, `10.0.0.2`, … |
+| File paths under user profiles | `C:\Users\USER-1\…` |
+"""
+    )
 
     st.warning(
-        "The application uses Anthropic Claude through the commercial Anthropic API as a processing and recommendation layer. "
-        "When you use Auto Alert Extractor, AI Summary, Follow-up Reassessment, or CTI Research, selected content may be sent to the configured Claude API model. "
-        "Use real alert data only when your organization, customer, or lab environment allows this type of third-party API processing."
+        r"⚠️ **Then check where these identifiers hide:** command lines, URLs, and "
+        r"free-text descriptions routinely embed usernames, personal paths, and hostnames "
+        r"(`--user m.mueller`, `\\DE-LT-4711\share\…`). Sanitize those occurrences too."
     )
 
     st.markdown(
-        """
-        **In simple terms**
-
-        This tool may process real alert evidence such as usernames, hostnames, file paths, URLs, command lines, IP addresses, hashes, rule names, and vendor fields if you paste them into the app.
-
-        That is similar to sending the same alert evidence to a private/commercial Claude API integration. The data is processed by the configured AI provider to return recommendations. It is not used by this app to train a model.
-
-        Based on Anthropic's commercial API documentation, customer inputs and outputs submitted through the commercial API are not used to train Anthropic models by default. Anthropic also describes standard API retention as automatic deletion of inputs and outputs from the backend within 30 days, with listed exceptions.
-
-        **Analyst responsibility**
-
-        You must only submit alert data when you are authorized to do so. If your organization or customer policy does not allow external AI/API processing of alert evidence, use synthetic, anonymized, NFR, or lab data instead.
-        """
+        "Technique names, hashes, public IPs, domains, process names, timestamps, and "
+        "detection metadata are what the triage actually needs — the analysis works "
+        "exactly as well on pseudonymized alerts."
     )
-
-    st.markdown("## Difference between Auto Alert Extractor and CTI Research")
 
     st.markdown(
-        """
-        **Auto Alert Extractor**
-        - May send the pasted alert content to the configured Claude API model for UDM mapping recommendations.
-        - Can include real alert fields such as usernames, hostnames, command lines, file paths, and URLs when you are authorized to process them.
-        - Does not perform internet research.
-        - Requires analyst validation before building the final evidence bundle.
-        - If you are unsure about privacy approval, use local extraction only and manually enter selected fields into Guided UDM Fields.
-
-        **AI Summary and Follow-up Reassessment**
-        - Use the final UDM evidence bundle created by the analyst.
-        - If you use Guided UDM Fields manually, only the fields you entered are included.
-        - This gives the analyst control over which sensitive values are submitted for AI reasoning.
-
-        **CTI Internet Research**
-        - Is optional and manually triggered.
-        - Sends only selected safe public IOC-style indicators.
-        - Applies stricter filtering than the AI Summary workflow.
-        - Excludes hostnames, usernames, private IPs, internal hostnames, local file paths, raw command lines, customer IDs, tenant IDs, vendor console URLs, traceability IDs, and MITRE TTPs where possible.
-        """
+        "**Maximum-control alternative:** use local extraction only, review the extracted "
+        "fields, and manually copy only approved fields into *Guided UDM Fields*. Then only "
+        "what you typed is ever sent for AI reasoning."
     )
 
-    st.markdown("## What you should never paste")
+    st.markdown(
+        "**Authorization is yours:** submit real alert data only when your organization or "
+        "customer policy allows this type of third-party API processing. This is a personal "
+        "research app, not an enterprise service with a data processing agreement. When in "
+        "doubt: pseudonymize, or use synthetic/lab data."
+    )
+
+    st.markdown("### Never paste")
 
     st.error(
-        "Do not paste secrets. Never submit API keys, passwords, access tokens, private keys, session cookies, credentials, or regulated data that you are not authorized to process."
+        "API keys, passwords, access tokens, private keys, certificates, session cookies, "
+        "credentials — and any regulated or contractually restricted data you are not "
+        "authorized to process."
     )
+
+    st.markdown("### Feature differences at a glance")
 
     st.markdown(
-        """
-        Be especially careful with:
-
-        - API keys, tokens, passwords, private keys, certificates, and session cookies
-        - Production customer data where external API processing is not approved
-        - Highly regulated personal data unless your organization has approved this processing
-        - Data covered by special contractual restrictions
-        - Any alert content you would not be allowed to submit to your organization's approved AI/API environment
-        """
+"""
+- **Auto Alert Extractor** — may send pasted alert content to the AI for UDM mapping suggestions. No internet research. Analyst validation required before the evidence bundle is built.
+- **AI Summary & Follow-up Reassessment** — use only the final analyst-approved evidence bundle. With Guided UDM Fields, only fields you entered are included.
+- **CTI Internet Research** — optional, manual, strictest filtering: only safe public IOC-style indicators; blocks hostnames, usernames, private IPs, local paths, raw command lines, customer/tenant IDs, vendor console URLs, and traceability IDs where possible. Vendor console URLs are preserved for traceability but never treated as threat IOCs.
+"""
     )
 
-    st.markdown("## What the app minimizes")
-
-    st.markdown(
-        """
-        The app applies different handling depending on the feature:
-
-        - Raw alerts are parsed locally before UDM mapping.
-        - The analyst approves mappings before the final evidence bundle is built.
-        - CTI research is more restrictive than UDM mapping.
-        - CTI sanitization removes or blocks private IPs, internal hostnames, usernames, customer identifiers, vendor portal links, raw command lines, and traceability IDs where possible.
-        - Vendor console URLs and detection links are preserved for traceability but are not treated as threat IOCs.
-        """
-    )
-
-    st.markdown("## AI output is not a verdict")
+    st.markdown("### AI output is not a verdict")
 
     st.success(
-        "The AI provides recommendations only. UDM mappings, investigation summaries, CTI results, and follow-up conclusions require analyst review. "
-        "Do not escalate, close, or classify an incident based only on AI output."
+        "UDM mappings, triage summaries, CTI results, and follow-up conclusions are "
+        "recommendations requiring analyst review. Do not escalate, close, or classify an "
+        "incident based only on AI output."
     )
 
-    st.markdown("## Alpha limitations")
+    st.markdown("### Alpha limitations")
 
     st.markdown(
-        """
-        This is an alpha release. Expect limitations:
-
-        - UDM mappings may need editing.
-        - The ontology is still expanding.
-        - CTI filtering is conservative by design.
-        - Local SQLite feedback storage may not be persistent on Streamlit Community Cloud.
-        - The tool does not connect directly to your SIEM, EDR, or customer environment.
-        - The tool is designed for analyst learning, triage support, and product feedback.
-        """
+        "UDM mappings may need editing · the ontology is still expanding · CTI filtering is "
+        "conservative by design · feedback storage may not persist on Streamlit Community "
+        "Cloud · no direct SIEM/EDR connection — the tool is for analyst learning, triage "
+        "support, and product feedback."
     )
 
 
