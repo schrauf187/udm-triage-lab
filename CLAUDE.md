@@ -116,3 +116,20 @@ behavior). Run with `streamlit run streamlit_app.py`.
 - Flag the security implication of any change touching the CTI filter, the analyst
   gate, or secrets handling.
 - Chris is a SOC/security professional — explain security reasoning, don't dumb it down.
+
+## Working agreement (experience level + pace)
+Chris is a security/SOC professional but **not a software developer** — expert on the
+security substance, not on coding mechanics. So:
+- **Explain security reasoning at full depth** (CTI boundary, analyst gate, secrets, threat
+  model). **Explain software/engineering mechanics in plain language** — no unexplained
+  jargon, say what a change does and why in terms a non-coder can follow.
+- **Default pace: plan → Chris's approval → one small change → PR → verify.** One task at a
+  time; don't batch unrelated changes; keep commits/PRs small and single-concern.
+- **Investigate before building.** When a task has a genuinely uncertain part (e.g. what a
+  hosting environment exposes at runtime), find out the reality first, then present the
+  options in plain language and let Chris pick before writing code. Don't assume.
+- **Wait for an explicit "go"** before implementing anything non-trivial.
+- **Safety-first for non-critical code.** A cosmetic or convenience feature must never be
+  able to break the app it touches — prefer fail-silent/degrade-gracefully designs.
+- Chris verifies changes on the live Streamlit Cloud deploy after merge; tell him exactly
+  what he should see to confirm success.
