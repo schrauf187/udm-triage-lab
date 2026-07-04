@@ -109,6 +109,10 @@ behavior). Run with `streamlit run streamlit_app.py`.
    confidence or high severity (route on existing importance/severity fields).
 7. **Calibration tracking** (per-alert-type AI accuracy from feedback DB) and
    **cross-alert entity linking** (host/user/hash → alert IDs, campaign detection).
+8. **Incident/case-level input** — support pasting a case containing multiple alerts
+   (alert 1, alert 2, alert 3 with different hosts/users), as modern platforms group alerts
+   into incidents. Requires multi-entity handling in extraction, the evidence bundle, and
+   attack-path logic. Pairs naturally with cross-alert entity linking (item 7).
 
 ## Product vision (context for all future work)
 
