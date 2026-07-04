@@ -110,6 +110,16 @@ behavior). Run with `streamlit run streamlit_app.py`.
 7. **Calibration tracking** (per-alert-type AI accuracy from feedback DB) and
    **cross-alert entity linking** (host/user/hash → alert IDs, campaign detection).
 
+## Product vision (context for all future work)
+
+The core SOC problem: alerts are singular events triggered by detections, but the analyst's real question — TP or FP — often depends on whether the alert is part of a larger attack unfolding over time. Commercial tools (Google SecOps cases, CrowdStrike incidents) group alerts by same-host/same-IP OR-logic; there is no real intelligence in the grouping.
+
+Vision: use analyst experience (and later threat intelligence) to identify attack patterns over longer periods. This is why alert-centric and IOC-centric hunting matter so much in the app. Since there is no SIEM/EDR connection, the analyst is both the sensor and the ground truth — follow-up evidence and feedback are how the system learns whether something was a real incident. Long-term, the ontology should understand attack paths (entities and relationships over time), not only per-field weights that help the AI produce good analysis.
+
+Data-privacy stance (informed by years of works-council experience): at alert-triage stage, PII lives in hostnames, usernames, emails, private IPs, and user-profile file paths — plus wherever those hide inside command lines, URLs, and free text. Everything else in alert metadata is investigation-safe. Deep personal-data handling belongs to the forensics/IR stage, not alert triage. The product answer is pseudonymization guidance now, and ontology-driven pseudonymization at intake as a roadmap feature (consistent renaming that preserves correlations).
+
+This is Chris's personal research project (not an employer product) to understand AI and agentic AI in SOC work, and to collaborate with analysts on a private basis.
+
 ## How Chris likes to work
 - Show the diff and reasoning before applying big changes.
 - One milestone task at a time; verify after each.
