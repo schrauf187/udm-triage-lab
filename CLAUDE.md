@@ -1,0 +1,118 @@
+# UDM Triage Lab — Project Context
+
+## What this is
+An AI-assisted SOC alert triage and UDM-normalization MVP (Streamlit).
+Pipeline: messy vendor alert (CrowdStrike / Defender / Sentinel / Splunk / etc.)
+→ local flatten + field inventory → AI-suggested UDM mapping (analyst-validated)
+→ ontology enrichment → MITRE ATT&CK mapping → cautious attack-path hypothesis
+→ validation hunt queries → AI triage summary → optional CTI-safe IOC web research
+→ analyst feedback capture.
+
+**Core philosophy: the analyst is the trust boundary.** Every AI output is a
+suggestion requiring human validation, never an automatic verdict.
+
+## Status
+MVP. Milestone 3 complete (guided input, auto extractor, feedback interface,
+feedback DB, public admin mode). **Preparing a public alpha launch on LinkedIn
+within days.** Repo is public. Hosted on Streamlit Community Cloud,
+auto-deploys from `main`.
+
+## Stack
+- Streamlit UI — single large `streamlit_app.py` (~3,400 lines)
+- `triage/` package — the engine
+- Anthropic Claude API — default `claude-haiku-4-5-20251001`; CTI and mapper
+  models overridable via `CLAUDE_CTI_WEB_MODEL` / `CLAUDE_MAPPER_MODEL` secrets
+- Package mgmt: `uv` (pyproject.toml + uv.lock). Streamlit Cloud reads `requirements.txt`.
+- Secrets via `st.secrets`: `ANTHROPIC_API_KEY`, `ADMIN_PASSWORD` — **never commit secrets**
+
+## Running locally
+`.streamlit/secrets.toml` (gitignored) holds ANTHROPIC_API_KEY and optionally
+ADMIN_PASSWORD (if unset, admin mode is disabled by design — keep that fail-closed
+behavior). Run with `streamlit run streamlit_app.py`.
+
+## Architecture map (triage/)
+- `raw_extractor.py` — parse raw pasted alert (JSON / key-value / vendor text) into a
+  flattened field inventory with per-field sensitivity
+- `extractors.py` — flatten JSON, classify UDM fields, extract entities
+- `ai_udm_mapper.py` — AI-suggested UDM field mappings (currently free-text JSON + AI repair fallback)
+- `ontology.py` — **THE CROWN JEWEL.** Per-field metadata: meaning, importance,
+  category, evidence_role, privacy_sensitivity, cti_allowed, cti_transformation,
+  mitre_hints, analyst_questions, investigation_pivots. Protect and extend this.
+- `mitre_mapper.py` / `mitre_knowledge.py` — MITRE ATT&CK technique mapping (keyword-based)
+  and STIX knowledge loading. `mitre_knowledge.download_enterprise_attack()` can fetch
+  the ATT&CK dataset on demand.
+- `attack_path.py` — kill-chain hypothesis; separates observed / possible-previous /
+  possible-next and deliberately does NOT over-claim (e.g. an IP ≠ confirmed C2).
+  Currently substring matching over flattened values.
+- `cti_safety.py` — filters which indicators may leave the boundary for external CTI research
+- `query_generator.py` — validation hunt queries
+- `evidence_bundle.py` / `input_builder.py` — assemble the final analyst-approved UDM bundle
+- `feedback_db.py` — SQLite capture of analyst feedback, TP/FP verdicts, mapping decisions
+- `claude_client.py` — all Anthropic API calls (triage, follow-up reassessment,
+  CTI web research via the web_search tool)
+
+## Guardrails (do not break)
+- Never commit secrets. `.streamlit/secrets.toml`, `.env`, `*.sqlite` stay gitignored.
+- Keep the analyst validation gate — enforce it even in fast/demo flows.
+- CTI web research may only send allowed indicators: public IPs, domains, URLs, hashes,
+  MITRE IDs, sanitized command patterns. Never hostnames, usernames, internal IPs,
+  local paths, or customer identifiers.
+- Admin mode must stay fail-closed: no ADMIN_PASSWORD secret configured → admin disabled.
+- This is a learning/prototyping MVP. Prefer clear, readable code and explain the
+  security reasoning behind changes over clever engineering.
+
+## Milestone 3.9 — Launch cleanup (CURRENT WORK, in this order)
+1. **Delete all `*.bak` files** from the tree (~19 milestone snapshots of streamlit_app.py
+   plus several in triage/). Milestone history belongs in git history, not the tree.
+2. **Remove the committed 53MB `data/mitre/enterprise-attack.json`** —
+   `download_enterprise_attack()` fetches it on demand. Add it to .gitignore.
+   Verify the code path that downloads it at first run still works.
+3. **Fix `pyproject.toml`** — still says `name = "blank-app-template"` /
+   "A simple Streamlit app template." Set real name/description. Also sanity-check
+   deployability: repo pins Python 3.14 (.python-version) and pandas>=3.0 — confirm
+   Streamlit Community Cloud supports these; if unsure, prefer widely-supported pins.
+4. **Dedup shadowed functions** (the delicate one — do this in its own branch):
+   - `ontology.py`: 7 functions defined 3–4× each (e.g. enrich_field_with_ontology ×3,
+     enrich_key_value_table ×4, build_semantic_facts ×4)
+   - `cti_safety.py`: build_safe_cti_research_package ×4, has_cti_researchable_indicators ×3
+   - `claude_client.py`: 3 functions defined 2–3×
+   Python silently uses the LAST definition, so earlier ones are dead shadow code.
+   For each duplicated function: diff all copies first, confirm the last is a true
+   replacement (not divergent logic), keep the last, delete the shadows. Run the app
+   and exercise the affected flows after each file.
+5. **Restructure `README.md`** — currently opens with privacy disclaimers and has the
+   entire "AI Processing and Data Handling" section duplicated verbatim. New structure:
+   one-line hook → what it does → screenshot placeholder → how to run → architecture
+   overview → limitations → ONE copy of the privacy section (it's good content, wrong position).
+6. **Secrets history check**: run
+   `git log --all --full-history -- .streamlit/secrets.toml .env` and
+   `git log -p --all | grep -iE "sk-ant"` — report findings. If anything is found,
+   STOP and tell me; the key must be rotated before launch.
+7. After each completed step: commit with a clear message. Small commits, one concern each.
+
+## Milestone 4+ — IP roadmap (AFTER launch, priority order)
+1. **Close the feedback loop.** Feedback is captured (feedback_db.py) and shown in the
+   admin panel but NEVER fed back into prompts or ontology — claude_client.py and
+   ai_udm_mapper.py don't reference it at all. Build: before triage, retrieve 2–3
+   similar past analyst-confirmed cases and inject as few-shot examples. Highest ROI.
+2. **Ontology as single source of truth for field governance.** cti_safety.py
+   re-implements allow/deny logic instead of reading cti_allowed / privacy_sensitivity
+   from the ontology. Wire enforcement to the data model.
+3. **Graph schema for attack_path** — model edges (user AUTHENTICATED_AS host,
+   process SPAWNED process, process CONNECTED_TO domain) → real traversal instead of
+   substring matching.
+4. **Evidence-coverage confidence for MITRE** — per technique, define which evidence
+   combinations earn high/med/low confidence, instead of keyword presence.
+5. **Structured tool-use output** — replace free-text JSON + AI-repair parsing with
+   forced tool_choice / input_schema on the Anthropic API.
+6. **Model routing by ambiguity** — Haiku fast pass, escalate to Sonnet on low
+   confidence or high severity (route on existing importance/severity fields).
+7. **Calibration tracking** (per-alert-type AI accuracy from feedback DB) and
+   **cross-alert entity linking** (host/user/hash → alert IDs, campaign detection).
+
+## How Chris likes to work
+- Show the diff and reasoning before applying big changes.
+- One milestone task at a time; verify after each.
+- Flag the security implication of any change touching the CTI filter, the analyst
+  gate, or secrets handling.
+- Chris is a SOC/security professional — explain security reasoning, don't dumb it down.
