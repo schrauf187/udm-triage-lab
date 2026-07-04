@@ -194,5 +194,9 @@ data/*.sqlite3
 *.sqlite
 *.sqlite3
 
+# MITRE ATT&CK STIX data — fetched on demand by
+# triage/mitre_knowledge.download_enterprise_attack(); not committed.
+data/mitre/*.json
+
 # Local backups
 local_backups/
