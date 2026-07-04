@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import streamlit as st
 from html import escape
 
@@ -41,6 +43,35 @@ from triage.mitre_knowledge import (
     enrich_technique_ids,
     extract_technique_ids_from_mitre_analysis,
 )
+
+
+@st.cache_data(show_spinner=False)
+def get_app_version():
+    """Return "<shorthash> · <YYYY-MM-DD>" for the running commit, or None.
+
+    Reads git at runtime. On Streamlit Community Cloud the app runs from a git
+    clone, so the .git directory and git binary are present and this reflects
+    the actually-deployed commit. Pinned to this file's own directory so the
+    process working directory can't affect it.
+
+    Fail-silent by design: any problem (no git, no .git, timeout, non-zero
+    exit) returns None so a cosmetic footer can never crash the app.
+    """
+    try:
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        short_hash = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo_dir, capture_output=True, text=True, timeout=2, check=True,
+        ).stdout.strip()
+        if not short_hash:
+            return None
+        commit_date = subprocess.run(
+            ["git", "show", "-s", "--format=%cs", "HEAD"],
+            cwd=repo_dir, capture_output=True, text=True, timeout=2, check=True,
+        ).stdout.strip()
+        return f"{short_hash} · {commit_date}" if commit_date else short_hash
+    except Exception:
+        return None
 
 
 st.set_page_config(
@@ -3376,3 +3407,9 @@ def render_public_guide_and_privacy():
 # ---------------------------------------------------------------------
 
 render_app_shell()
+
+
+# Discreet version footer at the very bottom of the page. Small grey text via
+# st.caption; shows "v: dev" if the running commit can't be resolved.
+_app_version = get_app_version()
+st.caption(f"v: {_app_version}" if _app_version else "v: dev")
