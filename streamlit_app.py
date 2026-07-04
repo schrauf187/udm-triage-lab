@@ -47,12 +47,17 @@ from triage.mitre_knowledge import (
 
 @st.cache_data(show_spinner=False)
 def get_app_version():
-    """Return "<shorthash> · <YYYY-MM-DD>" for the running commit, or None.
+    """Return "<shorthash> · <YYYY-MM-DD> · <subject>" for the running commit, or None.
 
     Reads git at runtime. On Streamlit Community Cloud the app runs from a git
     clone, so the .git directory and git binary are present and this reflects
     the actually-deployed commit. Pinned to this file's own directory so the
     process working directory can't affect it.
+
+    The commit subject (first line of the message) is truncated to ~60 chars so
+    the footer can't wrap. Hash + date are the core: if they fail, return None.
+    The subject is best-effort in its own guard — if only it fails, the footer
+    still shows "<shorthash> · <date>".
 
     Fail-silent by design: any problem (no git, no .git, timeout, non-zero
     exit) returns None so a cosmetic footer can never crash the app.
@@ -69,7 +74,25 @@ def get_app_version():
             ["git", "show", "-s", "--format=%cs", "HEAD"],
             cwd=repo_dir, capture_output=True, text=True, timeout=2, check=True,
         ).stdout.strip()
-        return f"{short_hash} · {commit_date}" if commit_date else short_hash
+
+        # Best-effort commit subject; a failure here must not lose hash + date.
+        subject = None
+        try:
+            subject = subprocess.run(
+                ["git", "show", "-s", "--format=%s", "HEAD"],
+                cwd=repo_dir, capture_output=True, text=True, timeout=2, check=True,
+            ).stdout.strip()
+            if len(subject) > 60:
+                subject = subject[:59].rstrip() + "…"
+        except Exception:
+            subject = None
+
+        parts = [short_hash]
+        if commit_date:
+            parts.append(commit_date)
+        if subject:
+            parts.append(subject)
+        return " · ".join(parts)
     except Exception:
         return None
 
