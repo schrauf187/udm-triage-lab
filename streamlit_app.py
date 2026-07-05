@@ -364,10 +364,6 @@ def render_simple_claude_result(claude_result: dict):
 
     if "error" in claude_result:
         st.error(claude_result["error"])
-
-        if "raw_response" in claude_result:
-            st.code(claude_result["raw_response"])
-
         return
 
     assessment = claude_result.get("assessment", "unknown")
@@ -2046,10 +2042,6 @@ def render_followup_reassessment_result(followup_result: dict):
 
     if "error" in followup_result:
         st.error(followup_result["error"])
-
-        if "raw_response" in followup_result:
-            st.code(followup_result["raw_response"])
-
         return
 
     updated_assessment = followup_result.get("updated_assessment", "unknown")
