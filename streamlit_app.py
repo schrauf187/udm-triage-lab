@@ -1429,10 +1429,6 @@ def render_auto_alert_extractor_input():
 
     if "error" in ai_mapping:
         st.error(ai_mapping["error"])
-
-        if "raw_response" in ai_mapping:
-            st.code(ai_mapping["raw_response"])
-
         return
 
     st.markdown("### AI mapping suggestions")
