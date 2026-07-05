@@ -60,37 +60,70 @@ def ask_claude_for_triage(evidence_bundle: Dict[str, Any]) -> Dict[str, Any]:
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=1600,
-        temperature=0.2,
-        system=(
+    # Rich alerts (many tactics/techniques, long lists) can push the triage JSON past
+    # the output limit and get cut off mid-token -> unparseable. Give it real headroom,
+    # detect truncation via stop_reason, retry once compact, then fail clean. Durable
+    # fix is structured tool-use output (Milestone 4+ roadmap item 5).
+    def _request(be_compact: bool):
+        system_prompt = (
             "You are a cautious SOC triage assistant. "
             "You reason only from supplied evidence and return valid JSON only."
+        )
+        if be_compact:
+            system_prompt += (
+                " Keep every list to the most important 3-5 items and each item to one "
+                "short sentence, so the JSON stays compact."
+            )
+        return client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=8000,
+            temperature=0.2,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": build_triage_prompt(evidence_bundle),
+                }
+            ],
+        )
+
+    incomplete_result = {
+        "error": (
+            "The AI triage response was incomplete for this alert (it produced more output "
+            "than fit in one response). You can retry, add follow-up evidence, or review the "
+            "alert manually."
         ),
-        messages=[
-            {
-                "role": "user",
-                "content": build_triage_prompt(evidence_bundle),
-            }
-        ],
-    )
-
-    text = clean_json_response(response.content[0].text)
-
-    # Claude sometimes wraps JSON in markdown fences like ```json ... ```
-    if text.startswith("```"):
-        text = text.replace("```json", "").replace("```", "").strip()
+        "assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+        "confidence": "low",
+        "triage_summary": "The AI triage response was incomplete and could not be shown. Retry or review manually.",
+    }
 
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        response = _request(be_compact=False)
+
+        # stop_reason == "max_tokens" means the JSON was cut off — do not parse it.
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            response = _request(be_compact=True)
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                return incomplete_result
+
+        text = clean_json_response(response.content[0].text)
+
+        # Claude sometimes wraps JSON in markdown fences like ```json ... ```
+        if text.startswith("```"):
+            text = text.replace("```json", "").replace("```", "").strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Fail clean: no raw truncated JSON dumped at the analyst.
+            return incomplete_result
+
+    except Exception as error:
         return {
-            "error": "Claude did not return valid JSON.",
-            "raw_response": text,
+            "error": f"Unexpected AI triage error: {type(error).__name__}: {error}",
             "assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
             "confidence": "low",
-            "triage_summary": "Claude returned a non-JSON response. Manual review required.",
         }
 def clean_json_response(text: str) -> str:
     """
@@ -187,182 +220,6 @@ def ask_claude_for_followup_reassessment(
             "updated_confidence": "low",
         }
 
-def build_cti_web_research_prompt(
-    cti_package: Dict[str, Any],
-    attack_path: Dict[str, Any],
-) -> str:
-    return f"""
-You are a cautious cyber threat intelligence analyst.
-
-You may use web search for public CTI/internet research.
-
-You are given a privacy-filtered CTI research package. It should contain only:
-- public IPs
-- domains
-- URLs
-- hashes
-- MITRE technique IDs/names
-- sanitized command-line behavior patterns
-
-Important:
-- Do not ask for hostnames, usernames, local file paths, internal IPs, or customer names.
-- Do not infer threat actor attribution from TTP overlap alone.
-- Public CTI findings can support or weaken suspicion, but they do not prove compromise by themselves.
-- Separate reputation/context from observed host evidence.
-- Return valid JSON only. No markdown outside JSON.
-
-Required JSON schema:
-{{
-  "cti_summary": "short CTI summary",
-  "researched_indicators": {{
-    "public_ips": [],
-    "domains": [],
-    "urls": [],
-    "hashes": [],
-    "mitre_techniques": [],
-    "sanitized_commandline_patterns": []
-  }},
-  "indicator_findings": [
-    {{
-      "indicator": "indicator value",
-      "indicator_type": "ip | domain | url | hash | technique | commandline_pattern",
-      "finding": "what public research suggests",
-      "risk": "benign | suspicious | malicious | unknown",
-      "confidence": "low | medium | high",
-      "source_summary": "short source-based explanation"
-    }}
-  ],
-  "confidence_impact": "decreases_confidence | no_change | increases_confidence",
-  "attack_path_relevance": "how CTI affects the current attack-path hypothesis",
-  "cti_supported_phases": ["phase 1", "phase 2"],
-  "cti_not_supported_phases": ["phase 1", "phase 2"],
-  "customer_cti_summary": "short non-alarmist customer-facing CTI summary",
-  "limitations": ["limitation 1", "limitation 2"],
-  "sources": [
-    {{
-      "title": "source title",
-      "url": "source url",
-      "relevance": "why this source matters"
-    }}
-  ]
-}}
-
-Privacy-filtered CTI research package:
-{json.dumps(cti_package, indent=2)}
-
-Current attack-path hypothesis:
-{json.dumps(attack_path, indent=2)}
-"""
-
-
-def _collect_text_and_citations(response) -> tuple[str, list]:
-    text_parts = []
-    citations = []
-
-    for block in response.content:
-        block_type = getattr(block, "type", None)
-
-        if block_type == "text":
-            text = getattr(block, "text", "")
-            if text:
-                text_parts.append(text)
-
-            for citation in getattr(block, "citations", []) or []:
-                citations.append(
-                    {
-                        "title": getattr(citation, "title", ""),
-                        "url": getattr(citation, "url", ""),
-                        "cited_text": getattr(citation, "cited_text", ""),
-                    }
-                )
-
-    return "\n".join(text_parts).strip(), citations
-
-
-def ask_claude_for_cti_web_research(
-    cti_package: Dict[str, Any],
-    attack_path: Dict[str, Any],
-) -> Dict[str, Any]:
-    api_key = st.secrets.get("ANTHROPIC_API_KEY")
-
-    if not api_key:
-        return {
-            "error": "Missing ANTHROPIC_API_KEY in .streamlit/secrets.toml",
-            "cti_summary": "CTI research could not run because the API key is missing.",
-        }
-
-    # Optional override if the default model does not support web search in your account.
-    cti_model = st.secrets.get("CLAUDE_CTI_WEB_MODEL", CLAUDE_MODEL)
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-
-        response = client.messages.create(
-            model=cti_model,
-            max_tokens=2200,
-            temperature=0.2,
-            system=(
-                "You are a cautious cyber threat intelligence analyst. "
-                "Use web search only for the provided public indicators and sanitized patterns. "
-                "Return valid JSON only."
-            ),
-            messages=[
-                {
-                    "role": "user",
-                    "content": build_cti_web_research_prompt(
-                        cti_package=cti_package,
-                        attack_path=attack_path,
-                    ),
-                }
-            ],
-            tools=[
-                {
-                    "type": "web_search_20250305",
-                    "name": "web_search",
-                    "max_uses": 1,
-                }
-            ],
-        )
-
-        text, citations = _collect_text_and_citations(response)
-
-        if text.startswith("```json"):
-            text = text.removeprefix("```json").strip()
-
-        if text.startswith("```"):
-            text = text.removeprefix("```").strip()
-
-        if text.endswith("```"):
-            text = text.removesuffix("```").strip()
-
-        try:
-            result = json.loads(text)
-        except json.JSONDecodeError:
-            return {
-                "error": "AI CTI research returned non-JSON output.",
-                "raw_response": text,
-                "cti_summary": "CTI research completed, but the response could not be parsed as JSON.",
-                "citations": citations,
-            }
-
-        if citations:
-            result["citations"] = citations
-
-        usage = getattr(response, "usage", None)
-        if usage:
-            server_tool_use = getattr(usage, "server_tool_use", None)
-            if server_tool_use:
-                result["web_search_usage"] = {
-                    "web_search_requests": getattr(server_tool_use, "web_search_requests", None)
-                }
-
-        return result
-
-    except Exception as error:
-        return {
-            "error": f"Unexpected AI CTI web research error: {type(error).__name__}: {error}",
-            "cti_summary": "CTI research failed. Check whether web search is enabled for the organization and whether the selected model supports it.",
-        }
 # ---------------------------------------------------------------------
 # Override: more robust CTI web research prompt and parser
 # Fixes non-JSON / truncated JSON caused by verbose sources section.
@@ -763,40 +620,61 @@ def ask_claude_for_followup_reassessment(
     try:
         client = anthropic.Anthropic(api_key=api_key)
 
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=3500,
-            temperature=0.2,
-            system=(
+        # Same truncation guard as the triage call: give headroom, detect a max_tokens
+        # cut-off, retry once compact, then fail clean. (Structured output = roadmap item 5.)
+        def _request(be_compact: bool):
+            system_prompt = (
                 "You are a cautious SOC triage assistant. "
                 "Reason only from supplied evidence. "
                 "Return compact valid JSON only."
+            )
+            if be_compact:
+                system_prompt += (
+                    " Keep every list to the most important 3-5 items and each item to one "
+                    "short sentence, so the JSON stays compact."
+                )
+            return client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=8000,
+                temperature=0.2,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": build_followup_reassessment_prompt(
+                            evidence_bundle=evidence_bundle,
+                            attack_path=attack_path,
+                            original_claude_result=original_claude_result or {},
+                            followup_evidence=followup_evidence,
+                            cti_result=cti_result or {},
+                        ),
+                    }
+                ],
+            )
+
+        incomplete_result = {
+            "error": (
+                "The AI reassessment response was incomplete for this alert (it produced more "
+                "output than fit in one response). You can retry with less follow-up text, or "
+                "review manually."
             ),
-            messages=[
-                {
-                    "role": "user",
-                    "content": build_followup_reassessment_prompt(
-                        evidence_bundle=evidence_bundle,
-                        attack_path=attack_path,
-                        original_claude_result=original_claude_result or {},
-                        followup_evidence=followup_evidence,
-                        cti_result=cti_result or {},
-                    ),
-                }
-            ],
-        )
+            "updated_assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+            "updated_confidence": "low",
+        }
+
+        response = _request(be_compact=False)
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            response = _request(be_compact=True)
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                return incomplete_result
 
         text = _followup_extract_text(response)
 
         try:
             return _followup_parse_json_from_text(text)
-        except Exception as parse_error:
-            return {
-                "error": f"AI follow-up reassessment returned non-JSON output: {parse_error}",
-                "raw_response": text,
-                "updated_assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
-                "updated_confidence": "low",
-            }
+        except Exception:
+            # Fail clean: no raw truncated JSON dumped at the analyst.
+            return incomplete_result
 
     except Exception as error:
         return {
@@ -805,65 +683,4 @@ def ask_claude_for_followup_reassessment(
             "updated_confidence": "low",
         }
 
-
-# ---------------------------------------------------------------------
-# Override: IOC-only CTI web research prompt
-# MITRE TTPs are intentionally excluded from CTI research.
-# ---------------------------------------------------------------------
-def build_cti_web_research_prompt(
-    cti_package: dict,
-    attack_path: dict,
-) -> str:
-    return f"""
-You are a cautious cyber threat intelligence analyst.
-
-You may use web search only for the privacy-filtered public IOCs and public indicators provided below.
-
-Rules:
-- Research only public IPs, domains, URLs, hashes, and sanitized command-line behavior patterns.
-- Do not research MITRE TTPs here. TTPs are used for alert-centric grouping, not IOC research.
-- Do not ask for hostnames, usernames, local file paths, internal IPs, or customer names.
-- Ignore anything that looks like a UDM field name or placeholder.
-- Do not infer threat actor attribution from TTP overlap alone.
-- CTI findings can support hunting, but do not prove compromise.
-- Keep the response compact.
-- Return valid JSON only.
-- Do not include long source text inside the JSON.
-- Maximum 8 indicator findings.
-- Maximum 5 limitations.
-
-Required JSON schema:
-{{
-  "cti_summary": "short CTI summary",
-  "researched_indicators": {{
-    "public_ips": [],
-    "domains": [],
-    "urls": [],
-    "hashes": [],
-    "sanitized_commandline_patterns": []
-  }},
-  "indicator_findings": [
-    {{
-      "indicator": "indicator value",
-      "indicator_type": "ip | domain | url | hash | commandline_pattern",
-      "finding": "short finding",
-      "risk": "benign | suspicious | malicious | unknown",
-      "confidence": "low | medium | high",
-      "source_summary": "short summary only"
-    }}
-  ],
-  "confidence_impact": "decreases_confidence | no_change | increases_confidence",
-  "attack_path_relevance": "short explanation of how CTI affects the current attack-path hypothesis",
-  "cti_supported_phases": ["phase 1", "phase 2"],
-  "cti_not_supported_phases": ["phase 1", "phase 2"],
-  "customer_cti_summary": "short non-alarmist customer-facing CTI summary",
-  "limitations": ["limitation 1", "limitation 2"]
-}}
-
-Privacy-filtered IOC research package:
-{_cti_json.dumps(cti_package, indent=2)}
-
-Current attack-path hypothesis for context only:
-{_cti_json.dumps(attack_path, indent=2)}
-"""
 
