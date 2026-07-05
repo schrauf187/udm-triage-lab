@@ -69,8 +69,8 @@ behavior). Run with `streamlit run streamlit_app.py`.
    Verify the code path that downloads it at first run still works.
 3. **Fix `pyproject.toml`** — still says `name = "blank-app-template"` /
    "A simple Streamlit app template." Set real name/description. Also sanity-check
-   deployability: repo pins Python 3.14 (.python-version) and pandas>=3.0 — confirm
-   Streamlit Community Cloud supports these; if unsure, prefer widely-supported pins.
+   deployability: Python is pinned to 3.13 (.python-version) with requires-python >=3.11,
+   and pandas>=3.0 — kept to widely-supported pins that Streamlit Community Cloud runs.
 4. **Dedup shadowed functions** (the delicate one — do this in its own branch):
    - `ontology.py`: 7 functions defined 3–4× each (e.g. enrich_field_with_ontology ×3,
      enrich_key_value_table ×4, build_semantic_facts ×4)
