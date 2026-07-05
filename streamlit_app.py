@@ -1405,7 +1405,8 @@ def render_auto_alert_extractor_input():
             st.json(parsed.get("raw_fields", {}))
 
     analyst_ack = st.checkbox(
-        "I understand this demo/NFR alert content may be sent to the AI model for UDM mapping assistance.",
+        "I understand that this alert/incident content will be sent to the AI model for automated UDM mapping. "
+        "I have pseudonymized all my PII fields and read the data privacy section of the app.",
         key="auto_extractor_ai_ack",
     )
 
