@@ -1664,6 +1664,13 @@ def render_cti_research_result(cti_result: dict):
         usage = cti_result.get("web_search_usage", {}).get("web_search_requests", "unknown")
         st.metric("Web searches used", usage)
 
+    st.caption(
+        "Web research can misattribute or blend campaigns — treat associations as leads, not "
+        "conclusions. Their real value is sparking your next question: what would this mean in "
+        "my environment, and what should I rule out (e.g. internal privilege escalation, an "
+        "existing C2 connection)?"
+    )
+
     with st.expander("Indicator findings", expanded=True):
         findings = cti_result.get("indicator_findings", [])
 
@@ -1684,6 +1691,42 @@ def render_cti_research_result(cti_result: dict):
                     """,
                     unsafe_allow_html=True,
                 )
+
+                broader = finding.get("broader_picture", "")
+                if broader:
+                    st.caption(f"Broader picture: {broader}")
+
+                actors = finding.get("associated_actors", []) or []
+                if actors:
+                    st.markdown("**Associated actors / campaigns** — leads to validate:")
+                    for actor in actors:
+                        name = actor.get("name", "unknown")
+                        note = actor.get("note", "")
+                        url = actor.get("source_url", "")
+                        line = f"- {name}"
+                        if note:
+                            line += f" — {note}"
+                        if url:
+                            line += f" ([source]({url}))"
+                        st.markdown(line)
+
+                pivots = finding.get("pivot_iocs", []) or []
+                if pivots:
+                    st.markdown("**Candidate pivot IOCs — validate before hunting:**")
+                    for pivot in pivots:
+                        pivot_indicator = pivot.get("indicator", "unknown")
+                        pivot_type = pivot.get("type", "")
+                        note = pivot.get("note", "")
+                        url = pivot.get("source_url", "")
+                        line = f"- `{pivot_indicator}`"
+                        if pivot_type:
+                            line += f" ({pivot_type})"
+                        if note:
+                            line += f" — {note}"
+                        if url:
+                            line += f" ([source]({url}))"
+                        st.markdown(line)
+
                 st.divider()
 
     with st.expander("Attack-path relevance"):
@@ -1706,39 +1749,43 @@ def render_cti_research_result(cti_result: dict):
     with st.expander("Customer-facing CTI summary"):
         st.info(cti_result.get("customer_cti_summary", "No customer CTI summary returned."))
 
-    with st.expander("Sources / citations"):
-        sources = cti_result.get("sources", [])
-        citations = cti_result.get("citations", [])
+    with st.expander("Sources & further research", expanded=True):
+        # Deduplicate every URL the research surfaced: top-level sources[], API
+        # citation metadata, and inline source_url values inside findings/actors/pivots.
+        seen_urls: dict[str, str] = {}
+        source_order: list[str] = []
 
-        if sources:
-            st.markdown("#### Sources from AI response")
-            for source in sources:
-                title = source.get("title", "Untitled source")
-                url = source.get("url", "")
-                relevance = source.get("relevance", "")
+        def _add_source(url: str, title: str):
+            url = (url or "").strip()
+            if not url or url in seen_urls:
+                return
+            seen_urls[url] = title or url
+            source_order.append(url)
 
-                if url:
-                    st.write(f"- [{title}]({url}) — {relevance}")
-                else:
-                    st.write(f"- {title} — {relevance}")
+        for source in cti_result.get("sources", []) or []:
+            _add_source(source.get("url", ""), source.get("title", ""))
+        for citation in cti_result.get("citations", []) or []:
+            _add_source(citation.get("url", ""), citation.get("title", ""))
+        for finding in cti_result.get("indicator_findings", []) or []:
+            for actor in finding.get("associated_actors", []) or []:
+                _add_source(actor.get("source_url", ""), actor.get("name", ""))
+            for pivot in finding.get("pivot_iocs", []) or []:
+                _add_source(pivot.get("source_url", ""), pivot.get("indicator", ""))
 
-        if citations:
-            st.markdown("#### API citation metadata")
-            for citation in citations:
-                title = citation.get("title", "Untitled citation")
-                url = citation.get("url", "")
-                cited_text = citation.get("cited_text", "")
+        if source_order:
+            st.markdown("#### Sources cited")
+            for url in source_order:
+                st.write(f"- [{seen_urls[url]}]({url})")
+        else:
+            st.write("No public sources were returned for this run.")
 
-                if url:
-                    st.write(f"- [{title}]({url})")
-                else:
-                    st.write(f"- {title}")
+        queries = cti_result.get("search_queries", []) or []
+        if queries:
+            st.markdown("#### Web searches run")
+            for query in queries:
+                st.write(f"- `{query}`")
 
-                if cited_text:
-                    st.caption(cited_text)
-
-        if not sources and not citations:
-            st.write("No source metadata returned.")
+        st.caption("Sources are starting points — keep digging; these are leads, not verdicts.")
 
     with st.expander("Raw CTI JSON"):
         st.json(cti_result)
@@ -2107,7 +2154,8 @@ def render_cti_followup_testing_panel(parsed_json: dict, key_prefix: str):
     st.markdown("### 🌐 AI CTI research, IOC hunts, and follow-up testing")
     st.caption(
         "Use this panel to test CTI and re-evaluation directly from raw Advanced Lab JSON. "
-        "CTI runs once per loaded alert and uses only safe public IOC-style values."
+        "CTI runs once per loaded alert, uses only safe public IOC-style values, and aims at "
+        "actor/campaign association and candidate pivot IOCs (with sources) — leads to validate."
     )
 
     pipeline = build_pipeline(parsed_json)
@@ -3028,6 +3076,11 @@ def render_analyst_app():
 
     st.markdown("## 5. 🌐 AI CTI research and IOC hunts")
 
+    st.caption(
+        "Research goal: threat-actor / campaign association and candidate pivot IOCs, each with "
+        "a source — leads to validate, never verdicts."
+    )
+
     st.warning(
         "This optional CTI research sends only selected public indicators to external internet research: "
         "public IPs, domains, URLs, hashes, and sanitized command-line patterns. "
@@ -3230,7 +3283,7 @@ In alert-stage triage, personal data lives in a handful of field types. Rename t
 """
 - **Auto Alert Extractor** — may send pasted alert content to the AI for UDM mapping suggestions. No internet research. Analyst validation required before the evidence bundle is built.
 - **AI Summary & Follow-up Reassessment** — use only the final analyst-approved evidence bundle. With Guided UDM Fields, only fields you entered are included.
-- **CTI Internet Research** — optional, manual, strictest filtering: only safe public IOC-style indicators; blocks hostnames, usernames, private IPs, local paths, raw command lines, customer/tenant IDs, vendor console URLs, and traceability IDs where possible. Vendor console URLs are preserved for traceability but never treated as threat IOCs.
+- **CTI Internet Research** — optional, manual, strictest filtering: only safe public IOC-style indicators; blocks hostnames, usernames, private IPs, local paths, raw command lines, customer/tenant IDs, vendor console URLs, and traceability IDs where possible. Vendor console URLs are preserved for traceability but never treated as threat IOCs. It aims at threat-actor/campaign association and candidate pivot IOCs, each with a source — treat them as leads to validate, never verdicts.
 """
     )
 
