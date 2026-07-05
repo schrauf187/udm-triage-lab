@@ -442,6 +442,9 @@ Rules:
 - Do not ask for hostnames, usernames, local file paths, internal IPs, or customer names.
 - Ignore anything that looks like a UDM field name or placeholder.
 - Do not infer threat actor attribution from TTP overlap alone.
+- The package field "mitre_context" lists MITRE techniques already identified in this alert.
+  Use them as ATTACK CONTEXT to inform actor/campaign association — do NOT web-search MITRE
+  IDs or names as indicators.
 - CTI findings can support hunting, but do not prove compromise by themselves.
 - Every associated actor/campaign AND every pivot IOC MUST include a supporting source_url.
   If web research does not credibly support one, return an empty list and state

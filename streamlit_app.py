@@ -3078,9 +3078,10 @@ def render_analyst_app():
     )
 
     st.warning(
-        "This optional CTI research sends only selected public indicators to external internet research: "
+        "This optional CTI research sends only selected public indicators for internet research: "
         "public IPs, domains, URLs, hashes, and sanitized command-line patterns. "
-        "Hostnames, usernames, local file paths, process full paths, internal IPs, raw command lines, and MITRE TTPs are blocked from IOC research."
+        "Hostnames, usernames, local file paths, process full paths, internal IPs, and raw command lines never leave the app. "
+        "MITRE techniques are included as attack context, not researched as indicators."
     )
 
     cti_package = build_safe_cti_research_package(

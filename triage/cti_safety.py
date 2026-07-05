@@ -394,7 +394,7 @@ def build_safe_cti_research_package(
             "Reserved/documentation IP ranges such as 203.0.113.0/24 and 198.51.100.0/24 are not sent to CTI research.",
             "Raw command lines are not sent; only sanitized behavioral patterns are used.",
             "UDM field names are not sent as domains.",
-            "MITRE TTPs are not sent to CTI/IOC research; they remain in alert-centric hunts only.",
+            "MITRE techniques are included as attack context to inform actor/campaign research, not looked up as indicators.",
         ],
     }
 
@@ -807,6 +807,10 @@ def build_safe_cti_research_package(
         "urls": _cti_unique(urls),
         "hashes": _cti_unique(hashes),
         "sanitized_commandline_patterns": _cti_unique(sanitized_commandline_patterns),
+        # MITRE techniques are public vocabulary, not privacy-sensitive. They are
+        # included as ATTACK CONTEXT to inform actor/campaign research — not looked up
+        # as searchable indicators (see has_cti_researchable_indicators, which ignores them).
+        "mitre_context": _extract_techniques(mitre_analysis)[:15],
         "blocked_data_notice": [
             "Hostnames are not sent to CTI research.",
             "Usernames are not sent to CTI research.",
@@ -816,7 +820,7 @@ def build_safe_cti_research_package(
             "Reserved/documentation IP ranges such as 203.0.113.0/24 and 198.51.100.0/24 are not sent to CTI research.",
             "Raw command lines are not sent; only sanitized behavioral patterns are used.",
             "UDM field names are not sent as domains.",
-            "MITRE TTPs are not sent to CTI/IOC research; they remain in alert-centric hunts only.",
+            "MITRE techniques are included as attack context to inform actor/campaign research, not looked up as indicators.",
             "Vendor console URLs and detection links are not sent to CTI research.",
             "Customer IDs, tenant IDs, agent IDs, alert IDs, and detection IDs are not treated as file hashes.",
             "For EDR/process alerts, principal.ip is treated as endpoint context and is not automatically sent as CTI infrastructure.",
