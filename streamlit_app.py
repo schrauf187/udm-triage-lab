@@ -202,10 +202,6 @@ sample_alert = {
     "network.http.method": "GET",
     "network.http.user_agent": "Mozilla/5.0 PowerShell/7.4",
     "network.direction": "OUTBOUND",
-
-    "additional.fields.demo_context": "Safe public demo. Host, user, and internal IP are fictional. External indicator is EICAR test infrastructure.",
-    "additional.fields.expected_cti_result": "CTI should identify EICAR as a safe anti-malware test file, not real malware.",
-    "additional.fields.analyst_learning_goal": "Validate Office child process behavior, encoded PowerShell, external file retrieval, CTI-safe indicator handling, and analyst feedback flow."
 }
 
 def inject_compact_ui_css():
@@ -1762,6 +1758,10 @@ def render_cti_research_result(cti_result: dict):
             seen_urls[url] = title or url
             source_order.append(url)
 
+        # Live web-search results first (the pages the model actually read), then the
+        # model's own sources[], API citations, and inline source_urls from findings.
+        for web_source in cti_result.get("web_sources", []) or []:
+            _add_source(web_source.get("url", ""), web_source.get("title", ""))
         for source in cti_result.get("sources", []) or []:
             _add_source(source.get("url", ""), source.get("title", ""))
         for citation in cti_result.get("citations", []) or []:
@@ -1773,9 +1773,21 @@ def render_cti_research_result(cti_result: dict):
                 _add_source(pivot.get("source_url", ""), pivot.get("indicator", ""))
 
         if source_order:
+            from urllib.parse import urlparse
+
             st.markdown("#### Sources cited")
-            for url in source_order:
-                st.write(f"- [{seen_urls[url]}]({url})")
+            for url in source_order[:10]:
+                title = seen_urls[url]
+                try:
+                    domain = urlparse(url).netloc or url
+                except Exception:
+                    domain = url
+                label = f"{title} — {domain}" if title and title != url else domain
+                st.write(f"- [{label}]({url})")
+
+            extra = len(source_order) - 10
+            if extra > 0:
+                st.caption(f"…and {extra} more source(s) used.")
         else:
             st.write("No public sources were returned for this run.")
 
@@ -3082,9 +3094,10 @@ def render_analyst_app():
     )
 
     st.warning(
-        "This optional CTI research sends only selected public indicators to external internet research: "
+        "This optional CTI research sends only selected public indicators for internet research: "
         "public IPs, domains, URLs, hashes, and sanitized command-line patterns. "
-        "Hostnames, usernames, local file paths, process full paths, internal IPs, raw command lines, and MITRE TTPs are blocked from IOC research."
+        "Hostnames, usernames, local file paths, process full paths, internal IPs, and raw command lines never leave the app. "
+        "MITRE techniques are included as attack context, not researched as indicators."
     )
 
     cti_package = build_safe_cti_research_package(

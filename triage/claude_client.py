@@ -442,6 +442,9 @@ Rules:
 - Do not ask for hostnames, usernames, local file paths, internal IPs, or customer names.
 - Ignore anything that looks like a UDM field name or placeholder.
 - Do not infer threat actor attribution from TTP overlap alone.
+- The package field "mitre_context" lists MITRE techniques already identified in this alert.
+  Use them as ATTACK CONTEXT to inform actor/campaign association — do NOT web-search MITRE
+  IDs or names as indicators.
 - CTI findings can support hunting, but do not prove compromise by themselves.
 - Every associated actor/campaign AND every pivot IOC MUST include a supporting source_url.
   If web research does not credibly support one, return an empty list and state
@@ -573,6 +576,26 @@ def ask_claude_for_cti_web_research(
                         search_queries.append(query)
             if search_queries:
                 result["search_queries"] = search_queries
+        except Exception:
+            pass
+
+        # Collect the actual web-search RESULT items. The web_search tool returns
+        # web_search_tool_result blocks whose .content is a list of web_search_result
+        # items carrying url + title — these are the pages the model actually read, and
+        # are what was missing from the "Sources" list. Fail-silent / defensive access.
+        try:
+            web_sources = []
+            for block in getattr(response, "content", []):
+                if _cti_get_attr(block, "type") != "web_search_tool_result":
+                    continue
+                for item in _cti_get_attr(block, "content", []) or []:
+                    url = _cti_get_attr(item, "url", "")
+                    if url:
+                        web_sources.append(
+                            {"url": url, "title": _cti_get_attr(item, "title", "")}
+                        )
+            if web_sources:
+                result["web_sources"] = web_sources
         except Exception:
             pass
 
