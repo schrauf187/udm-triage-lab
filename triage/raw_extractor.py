@@ -68,6 +68,144 @@ HASH_REGEX = re.compile(
 )
 
 
+# Top-level namespaces commonly seen at the start of vendor / UDM-ish field keys.
+# Used only as one signal for "does this line look like a key?" when detecting the
+# alternating key/value dump format (see _try_parse_kv_dump).
+KV_KEY_NAMESPACES = {
+    "vendor", "process", "host", "user", "event", "threat", "source",
+    "destination", "agent", "file", "network", "metadata", "security_result",
+    "principal", "target", "cps", "ecs", "ngsiem", "parser", "repo", "type",
+    "cloud", "url", "dns", "http", "registry", "observer", "related",
+}
+
+
+def _known_ontology_fields() -> set:
+    """
+    Best-effort set of known ontology field names, used only as a soft signal for
+    key detection. Wrapped so it can never break extraction if the ontology module
+    changes or fails to import.
+    """
+    global _ONTOLOGY_FIELDS_CACHE
+    try:
+        return _ONTOLOGY_FIELDS_CACHE
+    except NameError:
+        pass
+    try:
+        from triage.ontology import load_ontology
+        _ONTOLOGY_FIELDS_CACHE = set(load_ontology().keys())
+    except Exception:
+        _ONTOLOGY_FIELDS_CACHE = set()
+    return _ONTOLOGY_FIELDS_CACHE
+
+
+def _is_key_like(line: str) -> bool:
+    """
+    Heuristic: does this line look like a field KEY (rather than a value)?
+
+    Signals (any one is enough): starts with # or @ (vendor prefixes), contains a
+    dot (dotted field path), first token is a known SOC namespace, or the whole
+    line matches a known ontology field name. Deliberately does not require the
+    value line to be non-key-like — pairing is by position, this only scores the
+    key positions to validate the alternating-dump hypothesis.
+    """
+    key = line.strip()
+    if not key:
+        return False
+    if key.startswith("#") or key.startswith("@"):
+        return True
+    if "." in key:
+        return True
+    first_token = re.split(r"[.\s]", key.lstrip("#@"), 1)[0].lower()
+    if first_token in KV_KEY_NAMESPACES:
+        return True
+    if key in _known_ontology_fields():
+        return True
+    return False
+
+
+def _try_parse_kv_dump(raw_text: str):
+    """
+    Detect and parse an alternating-line key/value dump — the format produced when
+    an analyst copies an alert out of a vendor UI table (CrowdStrike / Sentinel /
+    Splunk field views): key on one line, value on the next, no : or = separators.
+
+    Returns {"raw_fields": {...}, "warnings": [...]} when the input clearly matches
+    this format, otherwise None so the caller falls through to existing parsers.
+    Keys are preserved verbatim (internal spaces, #/@ prefixes, [0] suffixes).
+    Empty values are allowed. Values that happen to be JSON are kept as strings.
+    """
+    lines = [ln.rstrip() for ln in raw_text.splitlines()]
+
+    # Trim leading and trailing blank lines.
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    # Strip a leading repeated "Key" / "Value" header pasted from a UI table.
+    while (
+        len(lines) >= 2
+        and lines[0].strip().lower() == "key"
+        and lines[1].strip().lower() == "value"
+    ):
+        lines = lines[2:]
+
+    non_empty = [ln for ln in lines if ln.strip()]
+    if len(non_empty) < 6:
+        return None
+
+    # Structural gate: a clear majority of lines must be separator-free. Colon /
+    # equals formats, labelled blocks, and JSON are all separator-heavy and fail here.
+    sep_free = sum(1 for ln in non_empty if ":" not in ln and "=" not in ln)
+    if sep_free / len(non_empty) < 0.6:
+        return None
+
+    # Pair by position; score how many key-position lines actually look like keys.
+    pairs: List[Tuple[str, str]] = []
+    key_positions = 0
+    key_like = 0
+    unpaired = 0
+
+    i = 0
+    while i < len(lines):
+        key = lines[i].strip()
+        if not key:
+            # Blank in a key position can't start a pair.
+            unpaired += 1
+            i += 1
+            continue
+        value = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        pairs.append((key, value))
+        key_positions += 1
+        if _is_key_like(key):
+            key_like += 1
+        i += 2
+
+    if key_positions == 0:
+        return None
+
+    ratio = key_like / key_positions
+
+    # Choose this parser only on a clear majority of key-like keys, so JSON and other
+    # formats that slip past the structural gate are still not misrouted here.
+    if ratio < 0.6:
+        return None
+
+    raw_fields: Dict[str, str] = {}
+    for key, value in pairs:
+        raw_fields[key] = value
+
+    warnings: List[str] = []
+    unclean = (key_positions - key_like) + unpaired
+    if ratio < 0.7 or unpaired > 0:
+        warnings.append(
+            f"Input looks like a key/value dump but {unclean} line(s) could not be "
+            "paired cleanly. Review the extracted fields below before using them."
+        )
+
+    return {"raw_fields": raw_fields, "warnings": warnings}
+
+
 def flatten_any(data: Any, prefix: str = "") -> Dict[str, Any]:
     """
     Flatten nested JSON-like structures into dot/key paths.
@@ -132,16 +270,13 @@ def _expand_json_strings(flattened: Dict[str, Any]) -> Dict[str, Any]:
     return expanded
 
 
-def _extract_json_from_text(raw_text: str):
+def _extract_embedded_json(raw_text: str):
     """
-    Try parsing the entire input as JSON first.
-    If that fails, try extracting the first JSON object/array from the text.
+    Extract the first JSON object/array embedded in free text (e.g. a JSON blob
+    inside a vendor log line). Whole-text JSON is handled separately by the caller
+    so that this greedy fallback runs only after key/value-dump detection.
     """
     text = raw_text.strip()
-
-    parsed = _try_json_loads(text)
-    if parsed is not None:
-        return parsed
 
     first_object = text.find("{")
     first_array = text.find("[")
@@ -238,18 +373,46 @@ def parse_raw_alert_content(raw_text: str) -> Dict[str, Any]:
             "input_type": "empty",
             "raw_fields": {},
             "flattened_fields": {},
+            "warnings": [],
         }
 
-    parsed_json = _extract_json_from_text(raw_text)
-
-    if parsed_json is not None:
-        flattened = flatten_any(parsed_json)
+    # 1. Whole-text JSON — unchanged behaviour for real JSON input.
+    whole_json = _try_json_loads(raw_text)
+    if whole_json is not None:
+        flattened = flatten_any(whole_json)
         flattened = _expand_json_strings(flattened)
 
         return {
             "input_type": "json",
             "raw_fields": flattened,
             "flattened_fields": flattened,
+            "warnings": [],
+        }
+
+    # 2. Alternating key/value dump (copied from a vendor UI table). Runs BEFORE the
+    #    greedy embedded-JSON fallback, which otherwise grabs a stray {"...":null}
+    #    snippet and reports an empty inventory as "json" input.
+    kv_dump = _try_parse_kv_dump(raw_text)
+    if kv_dump is not None:
+        raw_fields = kv_dump["raw_fields"]
+        return {
+            "input_type": "key_value_dump",
+            "raw_fields": raw_fields,
+            "flattened_fields": raw_fields,
+            "warnings": kv_dump.get("warnings", []),
+        }
+
+    # 3. JSON embedded inside free text (unchanged fallback).
+    embedded_json = _extract_embedded_json(raw_text)
+    if embedded_json is not None:
+        flattened = flatten_any(embedded_json)
+        flattened = _expand_json_strings(flattened)
+
+        return {
+            "input_type": "json",
+            "raw_fields": flattened,
+            "flattened_fields": flattened,
+            "warnings": [],
         }
 
     label_fields = _extract_known_label_blocks(raw_text)
@@ -268,6 +431,7 @@ def parse_raw_alert_content(raw_text: str) -> Dict[str, Any]:
         "input_type": "text",
         "raw_fields": raw_fields,
         "flattened_fields": raw_fields,
+        "warnings": [],
     }
 
 
@@ -378,4 +542,5 @@ def parse_raw_alert_to_field_inventory(raw_text: str) -> Dict[str, Any]:
         "raw_fields": raw_fields,
         "inventory": inventory,
         "field_count": len(raw_fields),
+        "warnings": parsed.get("warnings", []),
     }

@@ -1379,9 +1379,20 @@ def render_auto_alert_extractor_input():
     parsed = st.session_state.auto_extractor_parsed
 
     if parsed:
-        st.success(
-            f"Extracted {parsed.get('field_count', 0)} fields from {parsed.get('input_type', 'unknown')} input."
-        )
+        field_count = parsed.get("field_count", 0)
+        input_type = parsed.get("input_type", "unknown")
+
+        if field_count == 0:
+            # Never present an empty inventory as a success.
+            st.error(
+                "No fields could be extracted locally from this input. Check the "
+                "format, or paste the raw alert JSON / key-value dump."
+            )
+        else:
+            st.success(f"Extracted {field_count} fields from {input_type} input.")
+
+        for warning in parsed.get("warnings", []):
+            st.warning(warning)
 
         with st.expander("Extracted field inventory", expanded=True):
             st.dataframe(
