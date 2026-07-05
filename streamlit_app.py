@@ -1758,6 +1758,10 @@ def render_cti_research_result(cti_result: dict):
             seen_urls[url] = title or url
             source_order.append(url)
 
+        # Live web-search results first (the pages the model actually read), then the
+        # model's own sources[], API citations, and inline source_urls from findings.
+        for web_source in cti_result.get("web_sources", []) or []:
+            _add_source(web_source.get("url", ""), web_source.get("title", ""))
         for source in cti_result.get("sources", []) or []:
             _add_source(source.get("url", ""), source.get("title", ""))
         for citation in cti_result.get("citations", []) or []:
@@ -1769,9 +1773,21 @@ def render_cti_research_result(cti_result: dict):
                 _add_source(pivot.get("source_url", ""), pivot.get("indicator", ""))
 
         if source_order:
+            from urllib.parse import urlparse
+
             st.markdown("#### Sources cited")
-            for url in source_order:
-                st.write(f"- [{seen_urls[url]}]({url})")
+            for url in source_order[:10]:
+                title = seen_urls[url]
+                try:
+                    domain = urlparse(url).netloc or url
+                except Exception:
+                    domain = url
+                label = f"{title} — {domain}" if title and title != url else domain
+                st.write(f"- [{label}]({url})")
+
+            extra = len(source_order) - 10
+            if extra > 0:
+                st.caption(f"…and {extra} more source(s) used.")
         else:
             st.write("No public sources were returned for this run.")
 

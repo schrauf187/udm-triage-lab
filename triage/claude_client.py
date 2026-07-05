@@ -579,6 +579,26 @@ def ask_claude_for_cti_web_research(
         except Exception:
             pass
 
+        # Collect the actual web-search RESULT items. The web_search tool returns
+        # web_search_tool_result blocks whose .content is a list of web_search_result
+        # items carrying url + title — these are the pages the model actually read, and
+        # are what was missing from the "Sources" list. Fail-silent / defensive access.
+        try:
+            web_sources = []
+            for block in getattr(response, "content", []):
+                if _cti_get_attr(block, "type") != "web_search_tool_result":
+                    continue
+                for item in _cti_get_attr(block, "content", []) or []:
+                    url = _cti_get_attr(item, "url", "")
+                    if url:
+                        web_sources.append(
+                            {"url": url, "title": _cti_get_attr(item, "title", "")}
+                        )
+            if web_sources:
+                result["web_sources"] = web_sources
+        except Exception:
+            pass
+
         usage = getattr(response, "usage", None)
         if usage:
             server_tool_use = getattr(usage, "server_tool_use", None)
