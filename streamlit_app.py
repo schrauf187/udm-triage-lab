@@ -202,10 +202,6 @@ sample_alert = {
     "network.http.method": "GET",
     "network.http.user_agent": "Mozilla/5.0 PowerShell/7.4",
     "network.direction": "OUTBOUND",
-
-    "additional.fields.demo_context": "Safe public demo. Host, user, and internal IP are fictional. External indicator is EICAR test infrastructure.",
-    "additional.fields.expected_cti_result": "CTI should identify EICAR as a safe anti-malware test file, not real malware.",
-    "additional.fields.analyst_learning_goal": "Validate Office child process behavior, encoded PowerShell, external file retrieval, CTI-safe indicator handling, and analyst feedback flow."
 }
 
 def inject_compact_ui_css():
