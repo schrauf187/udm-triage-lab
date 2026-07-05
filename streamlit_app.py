@@ -1749,39 +1749,43 @@ def render_cti_research_result(cti_result: dict):
     with st.expander("Customer-facing CTI summary"):
         st.info(cti_result.get("customer_cti_summary", "No customer CTI summary returned."))
 
-    with st.expander("Sources / citations"):
-        sources = cti_result.get("sources", [])
-        citations = cti_result.get("citations", [])
+    with st.expander("Sources & further research", expanded=True):
+        # Deduplicate every URL the research surfaced: top-level sources[], API
+        # citation metadata, and inline source_url values inside findings/actors/pivots.
+        seen_urls: dict[str, str] = {}
+        source_order: list[str] = []
 
-        if sources:
-            st.markdown("#### Sources from AI response")
-            for source in sources:
-                title = source.get("title", "Untitled source")
-                url = source.get("url", "")
-                relevance = source.get("relevance", "")
+        def _add_source(url: str, title: str):
+            url = (url or "").strip()
+            if not url or url in seen_urls:
+                return
+            seen_urls[url] = title or url
+            source_order.append(url)
 
-                if url:
-                    st.write(f"- [{title}]({url}) — {relevance}")
-                else:
-                    st.write(f"- {title} — {relevance}")
+        for source in cti_result.get("sources", []) or []:
+            _add_source(source.get("url", ""), source.get("title", ""))
+        for citation in cti_result.get("citations", []) or []:
+            _add_source(citation.get("url", ""), citation.get("title", ""))
+        for finding in cti_result.get("indicator_findings", []) or []:
+            for actor in finding.get("associated_actors", []) or []:
+                _add_source(actor.get("source_url", ""), actor.get("name", ""))
+            for pivot in finding.get("pivot_iocs", []) or []:
+                _add_source(pivot.get("source_url", ""), pivot.get("indicator", ""))
 
-        if citations:
-            st.markdown("#### API citation metadata")
-            for citation in citations:
-                title = citation.get("title", "Untitled citation")
-                url = citation.get("url", "")
-                cited_text = citation.get("cited_text", "")
+        if source_order:
+            st.markdown("#### Sources cited")
+            for url in source_order:
+                st.write(f"- [{seen_urls[url]}]({url})")
+        else:
+            st.write("No public sources were returned for this run.")
 
-                if url:
-                    st.write(f"- [{title}]({url})")
-                else:
-                    st.write(f"- {title}")
+        queries = cti_result.get("search_queries", []) or []
+        if queries:
+            st.markdown("#### Web searches run")
+            for query in queries:
+                st.write(f"- `{query}`")
 
-                if cited_text:
-                    st.caption(cited_text)
-
-        if not sources and not citations:
-            st.write("No source metadata returned.")
+        st.caption("Sources are starting points — keep digging; these are leads, not verdicts.")
 
     with st.expander("Raw CTI JSON"):
         st.json(cti_result)
