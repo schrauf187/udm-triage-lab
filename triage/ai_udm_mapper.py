@@ -288,7 +288,7 @@ Broken response:
 
     response = client.messages.create(
         model=model,
-        max_tokens=2500,
+        max_tokens=8000,
         temperature=0,
         system="Return valid compact JSON only.",
         messages=[
@@ -318,17 +318,31 @@ def ask_ai_for_udm_mapping_suggestions(
 
     model = st.secrets.get("CLAUDE_MAPPER_MODEL", CLAUDE_MODEL)
 
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
+    # A large alert can produce 30+ mapping suggestions. max_tokens must be high
+    # enough that the whole JSON response fits, or the model gets cut off mid-token
+    # and the JSON can't be parsed or repaired. 16000 comfortably fits 35-40
+    # suggestions and stays within the non-streaming HTTP-timeout-safe range for
+    # the default Haiku model (64K output cap) and any Sonnet/Opus override.
+    # Longer-term fix: structured tool-use output (Milestone 4+ roadmap item 5),
+    # which removes free-text JSON parsing and this failure mode entirely.
+    max_tokens = 16000
 
-        response = client.messages.create(
+    def _request_mapping(be_compact: bool):
+        system_prompt = (
+            "You are a cautious SOC alert normalization assistant. "
+            "Return compact valid JSON only. Do not use web search."
+        )
+        if be_compact:
+            system_prompt += (
+                " Keep the response as small as possible: return at most 20 "
+                "mapping_suggestions (the most security-relevant), keep every "
+                "reason to a few words, and omit low-value fields."
+            )
+        return client.messages.create(
             model=model,
-            max_tokens=4500,
+            max_tokens=max_tokens,
             temperature=0.1,
-            system=(
-                "You are a cautious SOC alert normalization assistant. "
-                "Return compact valid JSON only. Do not use web search."
-            ),
+            system=system_prompt,
             messages=[
                 {
                     "role": "user",
@@ -340,27 +354,48 @@ def ask_ai_for_udm_mapping_suggestions(
             ],
         )
 
+    # Calm, analyst-facing message used whenever we can't produce a usable mapping.
+    # Never surface raw parser errors or truncated JSON to the analyst.
+    incomplete_message = (
+        "The AI mapping response was incomplete for this alert (it produced more "
+        "output than fit in one response). You can retry, or switch to Guided UDM "
+        "Fields to map the important fields manually."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+
+        response = _request_mapping(be_compact=False)
+
+        # stop_reason == "max_tokens" means the model was cut off, not done — the
+        # JSON is truncated. Do NOT feed it to the parser/repair (repair can't fix
+        # an incomplete response). Retry once asking for a more compact response.
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            response = _request_mapping(be_compact=True)
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                return {
+                    "error": incomplete_message,
+                    "mapping_suggestions": [],
+                    "unmapped_fields": [],
+                }
+
         response_text = _extract_response_text(response)
 
         try:
             result = _parse_json_from_text(response_text)
-        except Exception as parse_error:
+        except Exception:
+            # Complete but malformed JSON — try the AI repair step once.
             try:
                 result = _repair_mapping_json_with_ai(
                     client=client,
                     model=model,
                     broken_text=response_text,
                 )
-                result["repair_note"] = (
-                    f"Original AI mapping response required JSON repair: {parse_error}"
-                )
-            except Exception as repair_error:
+                result["repair_note"] = "Original AI mapping response required JSON repair."
+            except Exception:
+                # Fail clean: no raw parser traceback, no raw response dump.
                 return {
-                    "error": (
-                        "AI mapping response was not valid JSON and repair failed: "
-                        f"{parse_error}; repair error: {repair_error}"
-                    ),
-                    "raw_response": response_text,
+                    "error": incomplete_message,
                     "mapping_suggestions": [],
                     "unmapped_fields": [],
                 }
