@@ -1347,8 +1347,8 @@ def render_auto_alert_extractor_input():
     st.warning(
         "Auto Alert Extractor may send the pasted alert content to the configured Anthropic Claude API model "
         "for UDM mapping assistance. This is not internet CTI research and it is not a model-training pipeline. "
-        "Use real alert evidence only when your organization, customer, or lab environment allows this type of "
-        "third-party API processing. AI suggestions remain recommendations and must be reviewed by an analyst."
+        "Use real alert evidence only when your organization allows this type of third-party API processing or "
+        "ensure you properly pseudonymize. AI suggestions remain recommendations and must be reviewed by an analyst."
     )
 
     raw_content = st.text_area(
