@@ -2154,7 +2154,8 @@ def render_cti_followup_testing_panel(parsed_json: dict, key_prefix: str):
     st.markdown("### 🌐 AI CTI research, IOC hunts, and follow-up testing")
     st.caption(
         "Use this panel to test CTI and re-evaluation directly from raw Advanced Lab JSON. "
-        "CTI runs once per loaded alert and uses only safe public IOC-style values."
+        "CTI runs once per loaded alert, uses only safe public IOC-style values, and aims at "
+        "actor/campaign association and candidate pivot IOCs (with sources) — leads to validate."
     )
 
     pipeline = build_pipeline(parsed_json)
@@ -3075,6 +3076,11 @@ def render_analyst_app():
 
     st.markdown("## 5. 🌐 AI CTI research and IOC hunts")
 
+    st.caption(
+        "Research goal: threat-actor / campaign association and candidate pivot IOCs, each with "
+        "a source — leads to validate, never verdicts."
+    )
+
     st.warning(
         "This optional CTI research sends only selected public indicators to external internet research: "
         "public IPs, domains, URLs, hashes, and sanitized command-line patterns. "
@@ -3277,7 +3283,7 @@ In alert-stage triage, personal data lives in a handful of field types. Rename t
 """
 - **Auto Alert Extractor** — may send pasted alert content to the AI for UDM mapping suggestions. No internet research. Analyst validation required before the evidence bundle is built.
 - **AI Summary & Follow-up Reassessment** — use only the final analyst-approved evidence bundle. With Guided UDM Fields, only fields you entered are included.
-- **CTI Internet Research** — optional, manual, strictest filtering: only safe public IOC-style indicators; blocks hostnames, usernames, private IPs, local paths, raw command lines, customer/tenant IDs, vendor console URLs, and traceability IDs where possible. Vendor console URLs are preserved for traceability but never treated as threat IOCs.
+- **CTI Internet Research** — optional, manual, strictest filtering: only safe public IOC-style indicators; blocks hostnames, usernames, private IPs, local paths, raw command lines, customer/tenant IDs, vendor console URLs, and traceability IDs where possible. Vendor console URLs are preserved for traceability but never treated as threat IOCs. It aims at threat-actor/campaign association and candidate pivot IOCs, each with a source — treat them as leads to validate, never verdicts.
 """
     )
 
