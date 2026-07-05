@@ -113,6 +113,20 @@ behavior). Run with `streamlit run streamlit_app.py`.
    (alert 1, alert 2, alert 3 with different hosts/users), as modern platforms group alerts
    into incidents. Requires multi-entity handling in extraction, the evidence bundle, and
    attack-path logic. Pairs naturally with cross-alert entity linking (item 7).
+9. **AI mapping output-size ceiling — watch and revisit.** The UDM mapper writes a
+   fixed-size response (`max_tokens=16000` in ai_udm_mapper.py; ~35–40 suggestions). Large
+   alerts hit the ceiling; the current mitigation retries once asking for the top ~20
+   most-security-relevant suggestions so the analyst gets a complete result instead of a
+   truncated error. **Signal to act:** analysts regularly see the "response was incomplete
+   / use Guided UDM Fields" message, or important fields go missing on big incidents.
+   Levers in order (cheapest first): (a) raise `max_tokens` further — Haiku 4.5 caps at 64K
+   output, but past ~16–32K switch the call to streaming to avoid non-streaming timeouts;
+   (b) **structured tool-use output (item 5) is the real fix** — a forced schema eliminates
+   truncation/parse failures; (c) huge multi-alert pastes are really incident-level input
+   (item 8) — map per-alert, not one giant response; (d) a larger mapper model
+   (Sonnet/Opus via the `CLAUDE_MAPPER_MODEL` secret, 128K output) is a quality/cost lever
+   that also raises the ceiling — reach for it if mapping *quality* is the complaint, not
+   just size. A bigger model is not the first thing to try for size alone.
 
 ## Product vision (context for all future work)
 
