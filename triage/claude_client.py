@@ -60,37 +60,70 @@ def ask_claude_for_triage(evidence_bundle: Dict[str, Any]) -> Dict[str, Any]:
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=1600,
-        temperature=0.2,
-        system=(
+    # Rich alerts (many tactics/techniques, long lists) can push the triage JSON past
+    # the output limit and get cut off mid-token -> unparseable. Give it real headroom,
+    # detect truncation via stop_reason, retry once compact, then fail clean. Durable
+    # fix is structured tool-use output (Milestone 4+ roadmap item 5).
+    def _request(be_compact: bool):
+        system_prompt = (
             "You are a cautious SOC triage assistant. "
             "You reason only from supplied evidence and return valid JSON only."
+        )
+        if be_compact:
+            system_prompt += (
+                " Keep every list to the most important 3-5 items and each item to one "
+                "short sentence, so the JSON stays compact."
+            )
+        return client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=8000,
+            temperature=0.2,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": build_triage_prompt(evidence_bundle),
+                }
+            ],
+        )
+
+    incomplete_result = {
+        "error": (
+            "The AI triage response was incomplete for this alert (it produced more output "
+            "than fit in one response). You can retry, add follow-up evidence, or review the "
+            "alert manually."
         ),
-        messages=[
-            {
-                "role": "user",
-                "content": build_triage_prompt(evidence_bundle),
-            }
-        ],
-    )
-
-    text = clean_json_response(response.content[0].text)
-
-    # Claude sometimes wraps JSON in markdown fences like ```json ... ```
-    if text.startswith("```"):
-        text = text.replace("```json", "").replace("```", "").strip()
+        "assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+        "confidence": "low",
+        "triage_summary": "The AI triage response was incomplete and could not be shown. Retry or review manually.",
+    }
 
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        response = _request(be_compact=False)
+
+        # stop_reason == "max_tokens" means the JSON was cut off — do not parse it.
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            response = _request(be_compact=True)
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                return incomplete_result
+
+        text = clean_json_response(response.content[0].text)
+
+        # Claude sometimes wraps JSON in markdown fences like ```json ... ```
+        if text.startswith("```"):
+            text = text.replace("```json", "").replace("```", "").strip()
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # Fail clean: no raw truncated JSON dumped at the analyst.
+            return incomplete_result
+
+    except Exception as error:
         return {
-            "error": "Claude did not return valid JSON.",
-            "raw_response": text,
+            "error": f"Unexpected AI triage error: {type(error).__name__}: {error}",
             "assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
             "confidence": "low",
-            "triage_summary": "Claude returned a non-JSON response. Manual review required.",
         }
 def clean_json_response(text: str) -> str:
     """
@@ -587,40 +620,61 @@ def ask_claude_for_followup_reassessment(
     try:
         client = anthropic.Anthropic(api_key=api_key)
 
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=3500,
-            temperature=0.2,
-            system=(
+        # Same truncation guard as the triage call: give headroom, detect a max_tokens
+        # cut-off, retry once compact, then fail clean. (Structured output = roadmap item 5.)
+        def _request(be_compact: bool):
+            system_prompt = (
                 "You are a cautious SOC triage assistant. "
                 "Reason only from supplied evidence. "
                 "Return compact valid JSON only."
+            )
+            if be_compact:
+                system_prompt += (
+                    " Keep every list to the most important 3-5 items and each item to one "
+                    "short sentence, so the JSON stays compact."
+                )
+            return client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=8000,
+                temperature=0.2,
+                system=system_prompt,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": build_followup_reassessment_prompt(
+                            evidence_bundle=evidence_bundle,
+                            attack_path=attack_path,
+                            original_claude_result=original_claude_result or {},
+                            followup_evidence=followup_evidence,
+                            cti_result=cti_result or {},
+                        ),
+                    }
+                ],
+            )
+
+        incomplete_result = {
+            "error": (
+                "The AI reassessment response was incomplete for this alert (it produced more "
+                "output than fit in one response). You can retry with less follow-up text, or "
+                "review manually."
             ),
-            messages=[
-                {
-                    "role": "user",
-                    "content": build_followup_reassessment_prompt(
-                        evidence_bundle=evidence_bundle,
-                        attack_path=attack_path,
-                        original_claude_result=original_claude_result or {},
-                        followup_evidence=followup_evidence,
-                        cti_result=cti_result or {},
-                    ),
-                }
-            ],
-        )
+            "updated_assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
+            "updated_confidence": "low",
+        }
+
+        response = _request(be_compact=False)
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            response = _request(be_compact=True)
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                return incomplete_result
 
         text = _followup_extract_text(response)
 
         try:
             return _followup_parse_json_from_text(text)
-        except Exception as parse_error:
-            return {
-                "error": f"AI follow-up reassessment returned non-JSON output: {parse_error}",
-                "raw_response": text,
-                "updated_assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
-                "updated_confidence": "low",
-            }
+        except Exception:
+            # Fail clean: no raw truncated JSON dumped at the analyst.
+            return incomplete_result
 
     except Exception as error:
         return {
