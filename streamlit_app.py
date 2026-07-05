@@ -1664,6 +1664,13 @@ def render_cti_research_result(cti_result: dict):
         usage = cti_result.get("web_search_usage", {}).get("web_search_requests", "unknown")
         st.metric("Web searches used", usage)
 
+    st.caption(
+        "Web research can misattribute or blend campaigns — treat associations as leads, not "
+        "conclusions. Their real value is sparking your next question: what would this mean in "
+        "my environment, and what should I rule out (e.g. internal privilege escalation, an "
+        "existing C2 connection)?"
+    )
+
     with st.expander("Indicator findings", expanded=True):
         findings = cti_result.get("indicator_findings", [])
 
@@ -1684,6 +1691,42 @@ def render_cti_research_result(cti_result: dict):
                     """,
                     unsafe_allow_html=True,
                 )
+
+                broader = finding.get("broader_picture", "")
+                if broader:
+                    st.caption(f"Broader picture: {broader}")
+
+                actors = finding.get("associated_actors", []) or []
+                if actors:
+                    st.markdown("**Associated actors / campaigns** — leads to validate:")
+                    for actor in actors:
+                        name = actor.get("name", "unknown")
+                        note = actor.get("note", "")
+                        url = actor.get("source_url", "")
+                        line = f"- {name}"
+                        if note:
+                            line += f" — {note}"
+                        if url:
+                            line += f" ([source]({url}))"
+                        st.markdown(line)
+
+                pivots = finding.get("pivot_iocs", []) or []
+                if pivots:
+                    st.markdown("**Candidate pivot IOCs — validate before hunting:**")
+                    for pivot in pivots:
+                        pivot_indicator = pivot.get("indicator", "unknown")
+                        pivot_type = pivot.get("type", "")
+                        note = pivot.get("note", "")
+                        url = pivot.get("source_url", "")
+                        line = f"- `{pivot_indicator}`"
+                        if pivot_type:
+                            line += f" ({pivot_type})"
+                        if note:
+                            line += f" — {note}"
+                        if url:
+                            line += f" ([source]({url}))"
+                        st.markdown(line)
+
                 st.divider()
 
     with st.expander("Attack-path relevance"):
