@@ -3199,12 +3199,16 @@ def render_analyst_app():
 
     render_simple_claude_result(st.session_state.claude_result, evidence_bundle)
 
-    st.markdown("## 4. 🧭 Attack path and alert validation hunts")
+    st.markdown("## 4. 🧭 Attack path analysis")
     st.info(
-        "🔎 Why alert-centric hunting matters: a single alert rarely tells the full story. "
-        "The real investigation value comes from checking related activity on the same host, user, IP, domain, hash, or technique. "
-        "Use the alert validation hunts and follow-up evidence section to decide whether this is an isolated event, "
-        "part of a broader attack path, or benign activity."
+        "Why attack-path analysis matters: a single alert is one moment in a possible larger "
+        "sequence. The real picture emerges when you connect activity across the environment — "
+        "not only the same host or user, but different techniques, different accounts, and "
+        "related behavior that together suggest a broader attack path. Below is a hypothesis for "
+        "where this alert may sit in that sequence — possible positions to validate, never "
+        "confirmed stages. Use the queries in **Next steps** to connect attack-path activity "
+        "across alerts and timeframes. A dedicated attack-path hunting feature is coming soon "
+        "on the roadmap 🛣️."
     )
 
 
