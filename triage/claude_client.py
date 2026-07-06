@@ -125,6 +125,171 @@ def ask_claude_for_triage(evidence_bundle: Dict[str, Any]) -> Dict[str, Any]:
             "assessment": "INCONCLUSIVE_NEEDS_MORE_EVIDENCE",
             "confidence": "low",
         }
+
+
+def _compact_evidence_for_step(evidence_bundle: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Trim the full evidence bundle down to just what a single per-step query needs:
+    the extracted entities (host, user, hash, domain, ip, url, process, timestamps),
+    the MITRE techniques, and a few high-value facts. We deliberately drop
+    raw_udm_preview so the per-step call stays small and cheap.
+    """
+    if not isinstance(evidence_bundle, dict):
+        return {}
+
+    techniques = []
+    for match in evidence_bundle.get("mitre_pattern_analysis", {}).get("matches", []):
+        for technique in match.get("techniques", []):
+            if technique and technique not in techniques:
+                techniques.append(technique)
+    for technique in evidence_bundle.get("mitre_knowledge_enrichment", []):
+        technique_id = technique.get("id")
+        technique_name = technique.get("name")
+        label = f"{technique_id} {technique_name}".strip() if technique_id else technique_name
+        if label and label not in techniques:
+            techniques.append(label)
+
+    return {
+        "entities": evidence_bundle.get("entities", {}),
+        "mitre_techniques": techniques[:15],
+        "key_facts": evidence_bundle.get("highest_value_semantic_facts", [])[:10],
+    }
+
+
+def build_step_query_prompt(step_text: str, compact_context: Dict[str, Any], siem: str, edr: str) -> str:
+    """
+    Prompt for ONE investigation step -> paste-ready content for ONLY the selected
+    non-Generic platform(s). Emitting just the chosen platforms keeps the response small.
+    """
+    targets = []
+    if siem and siem != "Generic":
+        targets.append(f'SIEM = "{siem}" (kind: siem)')
+    if edr and edr != "Generic":
+        targets.append(f'EDR = "{edr}" (kind: edr)')
+    targets_text = "\n".join(f"- {target}" for target in targets)
+
+    return f"""
+You help a SOC analyst turn ONE investigation step into paste-ready detection content
+for their specific tooling. Produce content ONLY for the platform(s) listed below —
+one artifact per platform, nothing else.
+
+Investigation step to build for:
+"{step_text}"
+
+Target platform(s):
+{targets_text}
+
+Validated evidence you may use to fill in entity values (host, user, hash, domain, ip, url,
+process, timestamps) and MITRE technique context:
+{json.dumps(compact_context, indent=2)}
+
+Syntax rules:
+- Microsoft Sentinel -> KQL (Advanced Hunting style).
+- Microsoft Defender for Endpoint -> KQL (Advanced Hunting).
+- Splunk -> SPL.
+- Google SecOps -> UDM search syntax.
+- Elastic -> Elastic query (KQL/EQL/Lucene as appropriate), labelled.
+- CrowdStrike Falcon (EDR) -> short console click-path (e.g. "Investigate > Host search > ...")
+  PLUS a Falcon/LogScale search string where applicable.
+- Any EDR (kind: edr) -> short console navigation steps plus a search string where applicable.
+
+Content rules:
+- Fill in real entity values from the evidence where available.
+- Where something is environment-specific (index name, table, time window), use a clearly
+  marked placeholder like <your-index> or <adjust-time-window> and note it.
+- Keep each artifact short and focused on THIS step only.
+- Do not invent indicators that are not in the evidence.
+- Return valid JSON only. No markdown outside JSON.
+
+Required JSON schema:
+{{
+  "artifacts": [
+    {{
+      "platform": "exact platform name",
+      "kind": "siem | edr",
+      "purpose": "one short line: what this query/steps find and why",
+      "query_or_steps": "the query text, or the console click-path plus search string",
+      "placeholders_note": "one short line naming any placeholders to adjust, or empty string"
+    }}
+  ]
+}}
+"""
+
+
+def generate_step_query(step_text: str, evidence_bundle: Dict[str, Any], siem: str, edr: str) -> Dict[str, Any]:
+    """
+    One small AI call scoped to a single 'next step'. Returns
+    {"artifacts": [...]} on success or {"error": "..."} on any failure.
+
+    Sends the same class of evidence the triage call already sends (plus the two
+    platform names) — an internal Claude API call, no web_search, so it does not
+    touch the CTI web-egress boundary.
+    """
+    api_key = st.secrets.get("ANTHROPIC_API_KEY")
+
+    if not api_key:
+        return {"error": "Missing ANTHROPIC_API_KEY in .streamlit/secrets.toml"}
+
+    client = anthropic.Anthropic(api_key=api_key)
+    compact_context = _compact_evidence_for_step(evidence_bundle)
+
+    # Same truncation guard as the triage call: headroom, detect max_tokens cut-off,
+    # one compact retry, then a clean inline failure (never a raw dump).
+    def _request(be_compact: bool):
+        system_prompt = (
+            "You are a precise SOC detection engineer. You translate one investigation "
+            "step into paste-ready queries or console steps for the named platform(s), "
+            "and return valid JSON only."
+        )
+        if be_compact:
+            system_prompt += (
+                " Keep each artifact to a single focused query or a few console steps so "
+                "the JSON stays compact."
+            )
+        return client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=2500,
+            temperature=0.2,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": build_step_query_prompt(step_text, compact_context, siem, edr),
+                }
+            ],
+        )
+
+    failure_result = {"error": "Couldn't generate for this step — retry, or build it manually."}
+
+    try:
+        response = _request(be_compact=False)
+
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            response = _request(be_compact=True)
+            if getattr(response, "stop_reason", None) == "max_tokens":
+                return failure_result
+
+        text = clean_json_response(response.content[0].text)
+        if text.startswith("```"):
+            text = text.replace("```json", "").replace("```", "").strip()
+
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return failure_result
+
+        artifacts = parsed.get("artifacts") if isinstance(parsed, dict) else None
+        if not isinstance(artifacts, list) or not artifacts:
+            return failure_result
+
+        return {"artifacts": artifacts}
+
+    except Exception as error:
+        return {
+            "error": f"Couldn't generate for this step ({type(error).__name__}). Retry, or build it manually."
+        }
+
+
 def clean_json_response(text: str) -> str:
     """
     Claude may return JSON wrapped in Markdown fences.
