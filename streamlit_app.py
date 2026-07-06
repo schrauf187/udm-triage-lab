@@ -2594,6 +2594,19 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
             key="feedback_bad_hunts",
         )
 
+        generated_query_usefulness = st.selectbox(
+            "Did the generated step queries run in your environment / were they useful?",
+            [
+                "Not used / N/A",
+                "Ran as-is and were useful",
+                "Useful after minor edits",
+                "Didn't run / needed major changes",
+            ],
+            index=0,
+            help="Feedback on the platform-aware queries built from the Next steps tab.",
+            key="feedback_generated_query_usefulness",
+        )
+
         st.markdown("### Product quality ratings")
 
         q1, q2, q3, q4, q5 = st.columns(5)
@@ -2646,6 +2659,7 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
             "missing_log_sources": missing_log_sources,
             "useful_hunts": useful_hunts,
             "bad_hunts": bad_hunts,
+            "generated_query_usefulness": generated_query_usefulness,
             "quality": {
                 "ai_summary": ai_summary_quality,
                 "udm_mapping": udm_mapping_quality,
