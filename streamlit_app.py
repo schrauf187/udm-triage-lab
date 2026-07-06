@@ -20,7 +20,7 @@ from triage.cti_safety import (
 )
 
 from triage.attack_path import build_attack_path_hypothesis
-from triage.query_generator import generate_hunt_queries
+from triage.query_generator import generate_hunt_queries  # deprecated 2026-07; call site commented in build_pipeline
 from triage.evidence_bundle import build_evidence_bundle
 
 from triage.claude_client import (
@@ -311,13 +311,18 @@ def build_pipeline(parsed_json: dict):
         enriched_techniques=enriched_techniques,
     )
 
-    # 2. Then generate hunt queries using that attack path
-    hunt_queries = generate_hunt_queries(
-        flattened=flattened,
-        entities=entities,
-        mitre_analysis=mitre_analysis,
-        attack_path=attack_path,
-    )
+    # 2. Generic alert-centric hunt queries are deprecated (2026-07) and no longer
+    # rendered in the UI. Evidence collection now lives in the Next steps tab as
+    # platform-aware per-step queries. The call is left commented (not deleted) pending
+    # attack-chain / graph-based hunting; `hunt_queries` stays as an empty dict so any
+    # downstream reader keeps working.
+    # hunt_queries = generate_hunt_queries(
+    #     flattened=flattened,
+    #     entities=entities,
+    #     mitre_analysis=mitre_analysis,
+    #     attack_path=attack_path,
+    # )
+    hunt_queries = {}
 
     # 3. Build Claude evidence bundle
     evidence_bundle = build_evidence_bundle(
@@ -671,27 +676,12 @@ def render_attack_path_visualizer(attack_path: dict, hunt_queries: dict, compact
 
             st.warning(attack_path.get("attribution_warning"))
 
-    st.markdown("### Alert-centric hunts")
-    st.caption(
-        "These are alert-centric hunts. The goal is to find related alerts or events for the same host, user, IP, URL, process, or MITRE technique. If any hunt returns a hit, paste the relevant rows or analyst notes into the follow-up evidence section so the AI can re-evaluate the case and MITRE kill chain."
-    )
+    # Generic alert-centric hunt queries (KQL/SPL/YARA-L/CrowdStrike) were removed here
+    # (2026-07): they were pseudo-hunts (same-host/same-IP OR-logic) with no real
+    # intelligence. Evidence collection now lives in the Next steps tab as platform-aware
+    # per-step queries. The `hunt_queries` param is kept but unused pending attack-chain /
+    # graph-based hunting (roadmap: cross-alert entity linking).
 
-    with st.expander("Validation objective", expanded=not compact):
-        st.write(hunt_queries.get("validation_objective", ""))
-
-    query_tabs = st.tabs(["KQL", "SPL", "YARA-L", "CrowdStrike NGSIEM"])
-
-    with query_tabs[0]:
-        st.code(hunt_queries.get("kql", ""), language="kql")
-
-    with query_tabs[1]:
-        st.code(hunt_queries.get("spl", ""), language="spl")
-
-    with query_tabs[2]:
-        st.code(hunt_queries.get("yara_l", ""), language="yara")
-
-    with query_tabs[3]:
-        st.code(hunt_queries.get("crowdstrike_ngsiem", ""), language="text")
 
 def render_analysis(parsed_json: dict):
     """
