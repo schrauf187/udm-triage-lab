@@ -5,8 +5,8 @@ An AI-assisted SOC alert triage and UDM-normalization MVP (Streamlit).
 Pipeline: messy vendor alert (CrowdStrike / Defender / Sentinel / Splunk / etc.)
 → local flatten + field inventory → AI-suggested UDM mapping (analyst-validated)
 → ontology enrichment → MITRE ATT&CK mapping → cautious attack-path hypothesis
-→ validation hunt queries → AI triage summary → optional CTI-safe IOC web research
-→ analyst feedback capture.
+→ AI triage summary → platform-aware per-step evidence queries (on demand, per step)
+→ optional CTI-safe IOC web research → analyst feedback capture.
 
 **Core philosophy: the analyst is the trust boundary.** Every AI output is a
 suggestion requiring human validation, never an automatic verdict.
@@ -16,6 +16,12 @@ MVP. Milestone 3 complete (guided input, auto extractor, feedback interface,
 feedback DB, public admin mode). **Preparing a public alpha launch on LinkedIn
 within days.** Repo is public. Hosted on Streamlit Community Cloud,
 auto-deploys from `main`.
+
+**Implemented since launch prep:** platform-aware per-step evidence queries — the
+Next steps tab is now interactive: pick your SIEM/EDR and build a paste-ready
+query/console guide per step on demand (one small AI call each, cached per
+step+stack). This replaced the generic alert-centric hunts (`query_generator.py`
+deprecated).
 
 ## Stack
 - Streamlit UI — single large `streamlit_app.py` (~3,400 lines)
@@ -45,11 +51,14 @@ behavior). Run with `streamlit run streamlit_app.py`.
   possible-next and deliberately does NOT over-claim (e.g. an IP ≠ confirmed C2).
   Currently substring matching over flattened values.
 - `cti_safety.py` — filters which indicators may leave the boundary for external CTI research
-- `query_generator.py` — validation hunt queries
+- `query_generator.py` — **DEPRECATED (2026-07).** Generic alert-centric hunts removed from
+  the UI (pseudo-hunts). Module retained pending attack-chain / graph-based hunting once
+  cross-alert entity linking exists. Not currently wired in.
 - `evidence_bundle.py` / `input_builder.py` — assemble the final analyst-approved UDM bundle
 - `feedback_db.py` — SQLite capture of analyst feedback, TP/FP verdicts, mapping decisions
 - `claude_client.py` — all Anthropic API calls (triage, follow-up reassessment,
-  CTI web research via the web_search tool)
+  CTI web research via the web_search tool, and `generate_step_query` — the per-step
+  platform-aware query builder for the Next steps tab)
 
 ## Guardrails (do not break)
 - Never commit secrets. `.streamlit/secrets.toml`, `.env`, `*.sqlite` stay gitignored.

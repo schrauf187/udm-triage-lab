@@ -20,13 +20,14 @@ from triage.cti_safety import (
 )
 
 from triage.attack_path import build_attack_path_hypothesis
-from triage.query_generator import generate_hunt_queries
+from triage.query_generator import generate_hunt_queries  # deprecated 2026-07; call site commented in build_pipeline
 from triage.evidence_bundle import build_evidence_bundle
 
 from triage.claude_client import (
     ask_claude_for_triage,
     ask_claude_for_followup_reassessment,
     ask_claude_for_cti_web_research,
+    generate_step_query,
 )
 
 from triage.extractors import flatten_json, extract_entities, build_key_value_table
@@ -123,6 +124,14 @@ if "cti_researched" not in st.session_state:
 
 if "cti_package" not in st.session_state:
     st.session_state.cti_package = None
+
+# Per-step platform-aware query results, cached across Streamlit reruns so building
+# one step never wipes another and re-viewing a step never re-calls the API.
+if "step_queries" not in st.session_state:
+    st.session_state.step_queries = {}
+
+if "step_query_count" not in st.session_state:
+    st.session_state.step_query_count = 0
 
 if "auto_extractor_raw_content" not in st.session_state:
     st.session_state.auto_extractor_raw_content = ""
@@ -302,13 +311,18 @@ def build_pipeline(parsed_json: dict):
         enriched_techniques=enriched_techniques,
     )
 
-    # 2. Then generate hunt queries using that attack path
-    hunt_queries = generate_hunt_queries(
-        flattened=flattened,
-        entities=entities,
-        mitre_analysis=mitre_analysis,
-        attack_path=attack_path,
-    )
+    # 2. Generic alert-centric hunt queries are deprecated (2026-07) and no longer
+    # rendered in the UI. Evidence collection now lives in the Next steps tab as
+    # platform-aware per-step queries. The call is left commented (not deleted) pending
+    # attack-chain / graph-based hunting; `hunt_queries` stays as an empty dict so any
+    # downstream reader keeps working.
+    # hunt_queries = generate_hunt_queries(
+    #     flattened=flattened,
+    #     entities=entities,
+    #     mitre_analysis=mitre_analysis,
+    #     attack_path=attack_path,
+    # )
+    hunt_queries = {}
 
     # 3. Build Claude evidence bundle
     evidence_bundle = build_evidence_bundle(
@@ -353,7 +367,116 @@ def render_compact_bullets(items, icon: str = "•", empty_message: str = "None 
 
     st.markdown(bullet_html, unsafe_allow_html=True)
 
-def render_simple_claude_result(claude_result: dict):
+
+# Stack options for the per-step query generator. "Generic" is the default and means
+# "don't build platform-specific queries yet" — the Build button stays disabled until the
+# analyst picks a real SIEM or EDR.
+SIEM_OPTIONS = ["Generic", "Microsoft Sentinel", "Splunk", "Google SecOps", "Elastic"]
+EDR_OPTIONS = ["Generic", "CrowdStrike Falcon", "Microsoft Defender for Endpoint", "SentinelOne"]
+
+STEP_QUERY_DISCLAIMER = (
+    "Drafts built from your validated evidence — verify table/field names against your "
+    "environment before running. Leads, not verdicts."
+)
+
+
+def _stack_query_language(platform: str) -> str:
+    """Pick a code-block lexer for a generated artifact; fall back to plain text."""
+    name = (platform or "").lower()
+    if "sentinel" in name or "defender" in name or "secops" in name:
+        return "kql"
+    if "splunk" in name:
+        return "spl"
+    return "text"
+
+
+def render_step_artifacts(result: dict):
+    """
+    Render one step's generated queries/console guidance from the session cache.
+    `result` is whatever generate_step_query returned: {"artifacts": [...]} or {"error": ...}.
+    Fail-soft: an error becomes a calm inline note, never a traceback or raw dump.
+    """
+    if not result:
+        return
+
+    if "error" in result:
+        st.warning(result["error"])
+        return
+
+    artifacts = result.get("artifacts", [])
+    if not artifacts:
+        st.caption("No query could be built for this step. Retry, or build it manually.")
+        return
+
+    for artifact in artifacts:
+        platform = artifact.get("platform", "Platform")
+        purpose = artifact.get("purpose", "")
+        body = artifact.get("query_or_steps", "")
+        note = artifact.get("placeholders_note", "")
+
+        st.markdown(f"**{escape(str(platform))}** — {escape(str(purpose))}")
+        st.code(str(body), language=_stack_query_language(platform))
+        if note:
+            st.caption(f"Placeholders to adjust: {escape(str(note))}")
+
+    st.caption(STEP_QUERY_DISCLAIMER)
+
+
+def render_next_steps_with_builders(next_steps, evidence_bundle):
+    """
+    Render the recommended next steps, each with a 'Build query' button that turns THAT
+    step into paste-ready content for the analyst's selected SIEM/EDR.
+
+    Streamlit reruns the whole script on any button click, so generated output can't live
+    in local variables. Each result is cached in st.session_state.step_queries keyed by
+    stack+step and re-rendered from the cache on every rerun — so building one step never
+    wipes another, and re-viewing a step never re-calls the API.
+    """
+    siem = st.session_state.get("sel_siem", "Generic")
+    edr = st.session_state.get("sel_edr", "Generic")
+    stack_ready = (siem != "Generic" or edr != "Generic") and evidence_bundle is not None
+
+    if not next_steps:
+        render_compact_bullets([], icon="🧭", empty_message="No next steps returned.")
+        return
+
+    for index, step_text in enumerate(next_steps):
+        step_col, button_col = st.columns([0.8, 0.2])
+
+        with step_col:
+            st.markdown(f"🧭 {escape(str(step_text))}", unsafe_allow_html=True)
+
+        cache_key = f"{siem}|{edr}|{step_text}"
+
+        with button_col:
+            clicked = st.button(
+                "⚙ Build query",
+                key=f"build_step_{index}",
+                disabled=not stack_ready,
+                help=None if stack_ready else "Select your SIEM/EDR above to enable this.",
+                use_container_width=True,
+            )
+
+        # Only call the API when this exact (stack, step) has not been built yet — a
+        # repeat click or a rerun just re-shows the cached result, never re-spends tokens.
+        if clicked and cache_key not in st.session_state.step_queries:
+            with st.spinner("Building a query for this step..."):
+                result = generate_step_query(step_text, evidence_bundle, siem, edr)
+            st.session_state.step_queries[cache_key] = result
+            if isinstance(result, dict) and "error" not in result:
+                st.session_state.step_query_count += 1
+
+        cached = st.session_state.step_queries.get(cache_key)
+        if cached:
+            render_step_artifacts(cached)
+
+        st.divider()
+
+    if st.session_state.step_query_count:
+        st.caption(f"{st.session_state.step_query_count} step queries generated this session.")
+
+
+def render_simple_claude_result(claude_result: dict, evidence_bundle: dict = None):
     """
     Compact user-facing Claude result view for SOC analysts.
     Shows all content, but with smaller typography and tighter layout.
@@ -389,6 +512,15 @@ def render_simple_claude_result(claude_result: dict):
         """,
         unsafe_allow_html=True,
     )
+
+    # Stack selector — drives the per-step "Build query" buttons in the Next steps tab.
+    # Placed here (main results column, not the sidebar) so first-time visitors see it.
+    stack_col1, stack_col2 = st.columns(2)
+    with stack_col1:
+        st.selectbox("Your SIEM", SIEM_OPTIONS, key="sel_siem")
+    with stack_col2:
+        st.selectbox("Your EDR", EDR_OPTIONS, key="sel_edr")
+    st.caption("Select your stack to turn the steps below into paste-ready queries.")
 
     reasoning_tabs = st.tabs(
         [
@@ -431,16 +563,19 @@ def render_simple_claude_result(claude_result: dict):
             icon="🧩",
             empty_message="No missing evidence returned.",
         )
+        st.caption(
+            "Most of these gaps can be filled with the queries in Next steps — "
+            "select your stack and build them there."
+        )
 
     with reasoning_tabs[3]:
         st.markdown(
-            "<div class='compact-card-title'>Recommended next investigation steps</div>",
+            "<div class='compact-card-title'>Recommended next steps — build a query for any of these</div>",
             unsafe_allow_html=True,
         )
-        render_compact_bullets(
+        render_next_steps_with_builders(
             claude_result.get("recommended_next_steps", []),
-            icon="🧭",
-            empty_message="No next steps returned.",
+            evidence_bundle,
         )
 
     with st.expander("🧾 Customer-facing summary"):
@@ -541,27 +676,12 @@ def render_attack_path_visualizer(attack_path: dict, hunt_queries: dict, compact
 
             st.warning(attack_path.get("attribution_warning"))
 
-    st.markdown("### Alert-centric hunts")
-    st.caption(
-        "These are alert-centric hunts. The goal is to find related alerts or events for the same host, user, IP, URL, process, or MITRE technique. If any hunt returns a hit, paste the relevant rows or analyst notes into the follow-up evidence section so the AI can re-evaluate the case and MITRE kill chain."
-    )
+    # Generic alert-centric hunt queries (KQL/SPL/YARA-L/CrowdStrike) were removed here
+    # (2026-07): they were pseudo-hunts (same-host/same-IP OR-logic) with no real
+    # intelligence. Evidence collection now lives in the Next steps tab as platform-aware
+    # per-step queries. The `hunt_queries` param is kept but unused pending attack-chain /
+    # graph-based hunting (roadmap: cross-alert entity linking).
 
-    with st.expander("Validation objective", expanded=not compact):
-        st.write(hunt_queries.get("validation_objective", ""))
-
-    query_tabs = st.tabs(["KQL", "SPL", "YARA-L", "CrowdStrike NGSIEM"])
-
-    with query_tabs[0]:
-        st.code(hunt_queries.get("kql", ""), language="kql")
-
-    with query_tabs[1]:
-        st.code(hunt_queries.get("spl", ""), language="spl")
-
-    with query_tabs[2]:
-        st.code(hunt_queries.get("yara_l", ""), language="yara")
-
-    with query_tabs[3]:
-        st.code(hunt_queries.get("crowdstrike_ngsiem", ""), language="text")
 
 def render_analysis(parsed_json: dict):
     """
@@ -721,7 +841,7 @@ def render_analysis(parsed_json: dict):
         with st.spinner("AI is analyzing the evidence bundle..."):
             st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
 
-    render_simple_claude_result(st.session_state.claude_result)
+    render_simple_claude_result(st.session_state.claude_result, evidence_bundle)
 
 
     st.subheader("8. Extracted SOC Entities")
@@ -797,6 +917,8 @@ def _reset_analysis_state_for_new_alert():
     st.session_state.cti_result = None
     st.session_state.cti_researched = False
     st.session_state.cti_package = None
+    # Drop cached per-step queries so a new alert never shows another alert's queries.
+    st.session_state.step_queries = {}
 
 
 def _load_alert_into_session(alert: dict, source: str):
@@ -2472,6 +2594,19 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
             key="feedback_bad_hunts",
         )
 
+        generated_query_usefulness = st.selectbox(
+            "Did the generated step queries run in your environment / were they useful?",
+            [
+                "Not used / N/A",
+                "Ran as-is and were useful",
+                "Useful after minor edits",
+                "Didn't run / needed major changes",
+            ],
+            index=0,
+            help="Feedback on the platform-aware queries built from the Next steps tab.",
+            key="feedback_generated_query_usefulness",
+        )
+
         st.markdown("### Product quality ratings")
 
         q1, q2, q3, q4, q5 = st.columns(5)
@@ -2524,6 +2659,7 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
             "missing_log_sources": missing_log_sources,
             "useful_hunts": useful_hunts,
             "bad_hunts": bad_hunts,
+            "generated_query_usefulness": generated_query_usefulness,
             "quality": {
                 "ai_summary": ai_summary_quality,
                 "udm_mapping": udm_mapping_quality,
@@ -3061,7 +3197,7 @@ def render_analyst_app():
         with st.spinner("AI is analyzing the evidence bundle..."):
             st.session_state.claude_result = ask_claude_for_triage(evidence_bundle)
 
-    render_simple_claude_result(st.session_state.claude_result)
+    render_simple_claude_result(st.session_state.claude_result, evidence_bundle)
 
     st.markdown("## 4. 🧭 Attack path and alert validation hunts")
     st.info(

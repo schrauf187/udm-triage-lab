@@ -1,3 +1,14 @@
+"""
+DEPRECATED (2026-07): the generic alert-centric hunts this module produces were removed
+from the UI. They were pseudo-hunts (same-host / same-IP OR-logic) with no real
+intelligence. Evidence collection now lives in the "Next steps" tab as platform-aware,
+per-step queries (see triage.claude_client.generate_step_query).
+
+This module is retained, not deleted: it is intended to be replaced by attack-chain /
+graph-based hunting once cross-alert entity linking exists (roadmap). It is not currently
+wired into the UI — its only import (streamlit_app.py) has its call site commented out.
+"""
+
 from typing import Any, Dict, List
 
 
