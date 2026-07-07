@@ -23,6 +23,14 @@ query/console guide per step on demand (one small AI call each, cached per
 step+stack). This replaced the generic alert-centric hunts (`query_generator.py`
 deprecated).
 
+**Feedback now persists to Google Sheets** (not SQLite — Streamlit Cloud's disk is
+ephemeral and wiped every redeploy). Operator setup: a GCP service account with the
+Sheets API enabled, a private Sheet shared with the service-account email as Editor,
+and two secrets in Streamlit Cloud — `[gcp_service_account]` (the JSON key's fields;
+keep `private_key`'s `\n` sequences intact) and `FEEDBACK_SHEET_ID`. The app writes a
+header row on first write to the empty sheet, then appends one row per submission.
+New deps: `gspread`, `google-auth`.
+
 ## Stack
 - Streamlit UI — single large `streamlit_app.py` (~3,400 lines)
 - `triage/` package — the engine
@@ -55,13 +63,17 @@ behavior). Run with `streamlit run streamlit_app.py`.
   the UI (pseudo-hunts). Module retained pending attack-chain / graph-based hunting once
   cross-alert entity linking exists. Not currently wired in.
 - `evidence_bundle.py` / `input_builder.py` — assemble the final analyst-approved UDM bundle
-- `feedback_db.py` — SQLite capture of analyst feedback, TP/FP verdicts, mapping decisions
+- `feedback_db.py` — analyst feedback persistence to a **private Google Sheet** (append-only,
+  one flat row per submission via `gspread`; keeps the same public function names as the old
+  SQLite module). Fail-closed if Sheets secrets are absent; retries transient write failures.
 - `claude_client.py` — all Anthropic API calls (triage, follow-up reassessment,
   CTI web research via the web_search tool, and `generate_step_query` — the per-step
   platform-aware query builder for the Next steps tab)
 
 ## Guardrails (do not break)
-- Never commit secrets. `.streamlit/secrets.toml`, `.env`, `*.sqlite` stay gitignored.
+- Never commit secrets. `.streamlit/secrets.toml`, `.env`, `*.sqlite` stay gitignored. The
+  Google service-account JSON key must NEVER be committed — it lives only in `st.secrets`
+  (`[gcp_service_account]` + `FEEDBACK_SHEET_ID`).
 - Keep the analyst validation gate — enforce it even in fast/demo flows.
 - CTI web research may only send allowed indicators: public IPs, domains, URLs, hashes,
   MITRE IDs, sanitized command patterns. Never hostnames, usernames, internal IPs,

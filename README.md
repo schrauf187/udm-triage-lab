@@ -40,7 +40,7 @@ Straight answers, SOC-analyst to SOC-analyst:
 
 - **What happens to what you paste:** validated alert fields are sent to the Anthropic Claude API to generate the mapping, enrichment, and assessment — the same processing pattern as any AI assistant built into a SOC platform.
 - **No model training:** your data is **not** used to train any AI model, by me or as part of this app's API usage.
-- **What is stored:** nothing, except feedback you explicitly submit (verdict + comments), which lands in a small database the operator can read — so don't put sensitive details in feedback text.
+- **What is stored:** nothing, except feedback you explicitly submit (verdict + comments), which is saved to the operator's private Google Sheet (readable only by the operator) — so don't put sensitive details in feedback text.
 - **CTI egress control:** external research can only include indicator types explicitly marked safe (public IPs, domains, URLs, hashes, MITRE IDs). Hostnames, usernames, internal IPs, and paths are blocked by design.
 
 **Working with real alerts? Pseudonymize before you paste.** In alert-stage triage, the personal data lives in a handful of field types. Rename them consistently before pasting (same placeholder for the same entity, so correlations survive):
@@ -72,7 +72,7 @@ raw alert ──▶ extractor ──▶ field inventory ──▶ AI UDM mapping
                      ├──▶ MITRE ATT&CK mapping
                      ├──▶ attack-path hypothesis (observed vs. possible)
                      ├──▶ validation hunt queries
-                     ├──▶ AI triage assessment ──▶ ANALYST VERDICT ──▶ feedback DB
+                     ├──▶ AI triage assessment ──▶ ANALYST VERDICT ──▶ feedback (Google Sheet)
                      └──▶ CTI-safe IOC research (filtered egress)
 ```
 
