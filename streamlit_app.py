@@ -7,6 +7,7 @@ from html import escape
 from triage.raw_extractor import parse_raw_alert_to_field_inventory
 from triage.ai_udm_mapper import ask_ai_for_udm_mapping_suggestions
 from triage.feedback_db import (
+    feedback_store_diagnostics,
     feedback_store_is_configured,
     get_feedback_stats,
     init_feedback_db,
@@ -2440,6 +2441,34 @@ def render_feedback_database_status():
                 "`gcp_service_account` table and `FEEDBACK_SHEET_ID` to the app's secrets "
                 "to enable saving. Feedback is disabled until then (no data is lost — it is "
                 "simply not persisted)."
+            )
+
+            # Secret-safe diagnostic: shows which precondition is failing without ever
+            # revealing any secret values, so the operator can pinpoint the cause.
+            diagnostics = feedback_store_diagnostics()
+            st.markdown("**Diagnostic — why it's disabled (no secret values are shown):**")
+
+            def _check(ok: bool) -> str:
+                return "✅" if ok else "❌"
+
+            st.markdown(
+                f"- {_check(diagnostics['libraries_loaded'])} Libraries `gspread` + "
+                "`google-auth` installed"
+            )
+            if diagnostics["import_error"]:
+                st.markdown(f"    - import error: `{diagnostics['import_error']}`")
+            st.markdown(
+                f"- {_check(diagnostics['gcp_service_account_present'])} Secret "
+                "`[gcp_service_account]` present"
+            )
+            st.markdown(
+                f"- {_check(diagnostics['feedback_sheet_id_present'])} Secret "
+                "`FEEDBACK_SHEET_ID` present"
+            )
+            st.caption(
+                "A ❌ on the libraries means the deploy didn't install the new dependencies "
+                "(reboot/rebuild from requirements.txt). A ❌ on a secret means that exact "
+                "key name isn't found in the app's secrets (names are case-sensitive)."
             )
             return
 

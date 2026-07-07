@@ -115,16 +115,32 @@ def _json_loads_list(value: Any) -> List[Dict[str, Any]]:
 
 # --- connection ---------------------------------------------------------------------
 
+def _secret_present(key: str) -> bool:
+    """True if a top-level secret key is present and non-empty. Never raises."""
+    try:
+        return bool(st.secrets.get(key))
+    except Exception:
+        return False
+
+
 def feedback_store_is_configured() -> bool:
     """True only if the Sheets deps loaded and both secrets are present."""
     if gspread is None or Credentials is None:
         return False
-    try:
-        info = st.secrets.get("gcp_service_account")
-        sheet_id = st.secrets.get("FEEDBACK_SHEET_ID")
-    except Exception:
-        return False
-    return bool(info) and bool(sheet_id)
+    return _secret_present("gcp_service_account") and _secret_present("FEEDBACK_SHEET_ID")
+
+
+def feedback_store_diagnostics() -> Dict[str, Any]:
+    """
+    Admin-only, secret-safe explanation of why the store is or isn't configured.
+    Reports booleans and the library import error only — NEVER any secret values.
+    """
+    return {
+        "libraries_loaded": gspread is not None and Credentials is not None,
+        "import_error": str(_GSPREAD_IMPORT_ERROR) if _GSPREAD_IMPORT_ERROR else "",
+        "gcp_service_account_present": _secret_present("gcp_service_account"),
+        "feedback_sheet_id_present": _secret_present("FEEDBACK_SHEET_ID"),
+    }
 
 
 def _get_worksheet():
