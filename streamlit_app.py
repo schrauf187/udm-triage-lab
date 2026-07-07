@@ -7,6 +7,7 @@ from html import escape
 from triage.raw_extractor import parse_raw_alert_to_field_inventory
 from triage.ai_udm_mapper import ask_ai_for_udm_mapping_suggestions
 from triage.feedback_db import (
+    feedback_store_is_configured,
     get_feedback_stats,
     init_feedback_db,
     list_mapping_decisions,
@@ -153,6 +154,11 @@ if "last_feedback_submission" not in st.session_state:
 
 if "last_feedback_db_result" not in st.session_state:
     st.session_state.last_feedback_db_result = None
+
+# Holds a feedback submission that failed to save (transient Sheets error), so the
+# analyst can resubmit without retyping. Cleared on a successful save.
+if "pending_feedback" not in st.session_state:
+    st.session_state.pending_feedback = None
 
 sample_alert = {
     "metadata.event_type": "PROCESS_LAUNCH",
@@ -2425,15 +2431,26 @@ def _feedback_default_ttp_string(pipeline: dict) -> str:
 
 def render_feedback_database_status():
     """
-    Milestone 3.72:
-    Small SQLite feedback database status and review panel.
+    Small feedback store status and review panel (Google Sheets backed).
     """
-    with st.expander("Feedback database status", expanded=False):
+    with st.expander("Feedback store status", expanded=False):
+        if not feedback_store_is_configured():
+            st.info(
+                "Feedback storage (Google Sheets) is not configured. Add the "
+                "`gcp_service_account` table and `FEEDBACK_SHEET_ID` to the app's secrets "
+                "to enable saving. Feedback is disabled until then (no data is lost — it is "
+                "simply not persisted)."
+            )
+            return
+
         try:
             db_path = init_feedback_db()
             stats = get_feedback_stats()
 
-            st.success(f"Feedback database ready: {db_path}")
+            st.success(f"Feedback store ready — {db_path}")
+
+            if stats.get("total_feedback_submissions", 0) == 0:
+                st.caption("No feedback yet — the sheet is empty.")
 
             c1, c2, c3 = st.columns(3)
 
@@ -2490,8 +2507,9 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
 
     st.markdown("## 🧪 Feedback & learning")
     st.caption(
-        "This feedback is stored only in the current Streamlit session for now. "
-        "Milestone 3.72 will persist it into SQLite."
+        "Your feedback is saved to the operator's private Google Sheet so it survives app "
+        "restarts and directly improves the tool. Please don't include sensitive details "
+        "(hostnames, usernames, customer identifiers) in the free-text fields."
     )
 
     alert_summary = _feedback_extract_alert_summary(current_alert, pipeline)
@@ -2677,20 +2695,36 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
         st.session_state.feedback_submissions.append(feedback_record)
         st.session_state.last_feedback_submission = feedback_record
 
+        # save_feedback_submission never raises — it returns a status dict. We still wrap
+        # it so nothing at all can surface a traceback to the analyst.
         try:
             db_result = save_feedback_submission(feedback_record)
-            st.session_state.last_feedback_db_result = db_result
+        except Exception:
+            db_result = {"ok": False, "error": "unexpected"}
 
+        st.session_state.last_feedback_db_result = db_result
+
+        if db_result.get("ok"):
+            # Saved to the Sheet — clear any earlier pending copy.
+            st.session_state.pending_feedback = None
             st.success(
-                "Feedback captured and saved to SQLite database. "
-                f"Mapping decisions saved: {db_result.get('mapping_decisions_saved', 0)}"
+                "Feedback saved. Thank you — this directly improves the tool. "
+                f"(Mapping decisions saved: {db_result.get('mapping_decisions_saved', 0)})"
             )
-
-        except Exception as error:
-            st.session_state.last_feedback_db_result = None
+        elif db_result.get("disabled"):
+            # Storage not configured — keep the datum in session, tell the analyst calmly.
+            st.session_state.pending_feedback = feedback_record
+            st.info(
+                "Your feedback was captured for this session, but persistent storage is "
+                "not configured yet, so it was not saved. (Admin: add the Google Sheets "
+                "secrets to enable saving.)"
+            )
+        else:
+            # Transient failure after retries — graceful message, keep it for resubmit.
+            st.session_state.pending_feedback = feedback_record
             st.warning(
-                "Feedback captured in the current session, but database save failed: "
-                f"{type(error).__name__}: {error}"
+                "Feedback couldn't be saved right now — please try again in a moment. "
+                "Your answers are still filled in, so you can just press Submit again."
             )
 
     if st.session_state.get("last_feedback_submission"):
@@ -2698,7 +2732,7 @@ def render_feedback_learning_interface(current_alert: dict, pipeline: dict, cont
             st.json(st.session_state.last_feedback_submission)
 
     if st.session_state.get("last_feedback_db_result"):
-        with st.expander("Latest database save result", expanded=False):
+        with st.expander("Latest save result", expanded=False):
             st.json(st.session_state.last_feedback_db_result)
 
     if st.session_state.get("admin_unlocked", False):
@@ -2906,7 +2940,7 @@ def render_admin_database_review_panel():
     """
     Admin-only feedback database review.
     """
-    st.markdown("## Feedback Database Review")
+    st.markdown("## Feedback Review")
 
     render_feedback_database_status()
 
@@ -2914,8 +2948,8 @@ def render_admin_database_review_panel():
     render_admin_feedback_comments_table()
 
     st.caption(
-        "This reads the local SQLite feedback database. On Streamlit Community Cloud, "
-        "local database persistence may be temporary. Export regularly during alpha testing."
+        "This reads the operator's private Google Sheet, which persists across app restarts. "
+        "Use the CSV download above to keep a local copy."
     )
 
 
@@ -3370,7 +3404,7 @@ def render_public_guide_and_privacy():
 
 **No model training:** per Anthropic's commercial API terms, inputs and outputs are not used to train Anthropic models by default. Anthropic describes standard API retention as automatic deletion within 30 days, with listed exceptions. This app does not train any model on your data.
 
-**What this app stores:** nothing, except feedback you explicitly submit (verdict + comments), in a small local database the operator can read. Don't put sensitive details in feedback text. On Streamlit Community Cloud this storage may not persist.
+**What this app stores:** nothing, except feedback you explicitly submit (verdict + comments), which is saved to the operator's private Google Sheet so it survives app restarts and remains readable only by the operator. Don't put sensitive details in feedback text.
 """
     )
 
@@ -3444,8 +3478,8 @@ In alert-stage triage, personal data lives in a handful of field types. Rename t
 
     st.markdown(
         "UDM mappings may need editing · the ontology is still expanding · CTI filtering is "
-        "conservative by design · feedback storage may not persist on Streamlit Community "
-        "Cloud · no direct SIEM/EDR connection — the tool is for analyst learning, triage "
+        "conservative by design · feedback is saved to the operator's private Google Sheet · "
+        "no direct SIEM/EDR connection — the tool is for analyst learning, triage "
         "support, and product feedback."
     )
 
