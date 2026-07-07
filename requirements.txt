@@ -2,3 +2,5 @@ streamlit
 anthropic
 pandas
 requests
+gspread
+google-auth
